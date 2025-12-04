@@ -628,14 +628,15 @@ bool AudioEngine::SetTargetBitrate(int targetBitrate) {
     // Use GPU to convert the audio data to the target bitrate
     if (pImpl->gpuProcessor) {
         // Allocate buffer for converted audio
-        std::vector<float> inputAudio(pImpl->audioData.size());
-        std::vector<float> outputAudio(pImpl->audioData.size());  // Same size initially
+        std::vector<float> inputAudio(pImpl->audioData.size() / sizeof(char) * sizeof(float));  // Convert size appropriately
+        std::vector<float> outputAudio(inputAudio.size());  // Same size initially
 
         // Convert the char audio data to float for processing
+        // First convert char values to normalized floating point values (-1.0 to 1.0)
         for (size_t i = 0; i < pImpl->audioData.size(); i++) {
-            // Convert char to float (this is a simplified conversion)
+            // Convert char to float (normalize to [-1, 1])
             char sample = pImpl->audioData[i];
-            inputAudio[i] = static_cast<float>(sample) / 127.0f;  // Normalize to [-1, 1]
+            inputAudio[i] = static_cast<float>(sample) / 127.0f;  // Assuming 8-bit for simplicity
         }
 
         // Use GPU processor for bitrate conversion
@@ -653,8 +654,8 @@ bool AudioEngine::SetTargetBitrate(int targetBitrate) {
             for (size_t i = 0; i < outputAudio.size(); i++) {
                 float sample = outputAudio[i];
                 // Clamp value to valid range and convert back to char
-                float clampedSample = std::max(-1.0f, std::min(1.0f, sample));
-                pImpl->audioData[i] = static_cast<char>(clampedSample * 127);
+                sample = std::max(-1.0f, std::min(1.0f, sample));
+                pImpl->audioData[i] = static_cast<char>(sample * 127);
             }
 
             std::cout << "Audio bitrate converted from " << estimatedInputBitrate
@@ -669,4 +670,78 @@ bool AudioEngine::SetTargetBitrate(int targetBitrate) {
         std::cout << "No GPU processor available for bitrate conversion\n";
         return false;
     }
+}
+
+bool AudioEngine::SaveFile(const std::string& filePath) {
+    if (!pImpl->initialized) {
+        return false;
+    }
+
+    // Check if we have audio data to save
+    if (pImpl->audioData.empty()) {
+        std::cout << "Error: No audio data to save\n";
+        return false;
+    }
+
+    std::ofstream outputFile(filePath, std::ios::binary);
+    if (!outputFile) {
+        std::cout << "Error: Could not open file for writing: " << filePath << "\n";
+        return false;
+    }
+
+    // Write WAV file header first (since we're using wave format)
+    // RIFF header
+    outputFile.write("RIFF", 4);
+
+    // File size placeholder (will update later)
+    int fileSize = 36 + pImpl->audioData.size(); // 36 = header size, size of data
+    outputFile.write(reinterpret_cast<const char*>(&fileSize), 4);
+
+    // Format
+    outputFile.write("WAVE", 4);
+
+    // Format subchunk
+    outputFile.write("fmt ", 4);
+
+    // Subchunk1 size (16 for PCM)
+    int subchunk1Size = 16;
+    outputFile.write(reinterpret_cast<const char*>(&subchunk1Size), 4);
+
+    // Audio format (1 = PCM)
+    short audioFormat = 1;
+    outputFile.write(reinterpret_cast<const char*>(&audioFormat), 2);
+
+    // Number of channels
+    outputFile.write(reinterpret_cast<const char*>(&pImpl->waveFormat.nChannels), 2);
+
+    // Sample rate
+    outputFile.write(reinterpret_cast<const char*>(&pImpl->waveFormat.nSamplesPerSec), 4);
+
+    // Byte rate (sample rate * channels * bits per sample / 8)
+    int byteRate = pImpl->waveFormat.nAvgBytesPerSec;
+    outputFile.write(reinterpret_cast<const char*>(&byteRate), 4);
+
+    // Block align (channels * bits per sample / 8)
+    short blockAlign = pImpl->waveFormat.nBlockAlign;
+    outputFile.write(reinterpret_cast<const char*>(&blockAlign), 2);
+
+    // Bits per sample
+    short bitsPerSample = pImpl->waveFormat.wBitsPerSample;
+    outputFile.write(reinterpret_cast<const char*>(&bitsPerSample), 2);
+
+    // Data subchunk
+    outputFile.write("data", 4);
+
+    // Data size
+    int dataSize = pImpl->audioData.size();
+    outputFile.write(reinterpret_cast<const char*>(&dataSize), 4);
+
+    // Actual audio data
+    outputFile.write(pImpl->audioData.data(), pImpl->audioData.size());
+
+    outputFile.close();
+
+    std::cout << "Saved processed audio to file: " << filePath
+              << " (" << pImpl->audioData.size() << " bytes)\n";
+    return true;
 }

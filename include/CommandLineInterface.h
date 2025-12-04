@@ -90,6 +90,22 @@ private:
     bool HandleQuit();
 
     /**
+     * @brief Handle save command to save processed audio to file
+     * @param targetPath Target path for the output file
+     * @return true if successful, false otherwise
+     */
+    bool HandleSave(const std::string& targetPath);
+
+    /**
+     * @brief Handle convert command to convert audio with GPU acceleration
+     * @param inputPath Input file path
+     * @param outputPath Output file path
+     * @param targetBitrate Target bitrate for conversion (0 to use original)
+     * @return true if successful, false otherwise
+     */
+    bool HandleConvert(const std::string& inputPath, const std::string& outputPath, int targetBitrate);
+
+    /**
      * @brief Handle bitrate command to set target bitrate
      * @param targetBitrate Target bitrate in kbps
      * @return true if successful, false otherwise

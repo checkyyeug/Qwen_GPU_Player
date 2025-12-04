@@ -94,6 +94,33 @@ bool CommandLineInterface::ExecuteCommand(const std::vector<std::string>& args) 
             return false;
         }
     }
+    else if (command == "convert") {
+        if (args.size() < 3) {
+            std::cout << "Usage: convert <input_file> <output_file> [target_bitrate]\n";
+            std::cout << "  If bitrate is not provided, uses original file's bitrate\n";
+            return false;
+        }
+
+        int targetBitrate = 0;  // Default to use original bitrate
+        if (args.size() >= 4) {
+            try {
+                targetBitrate = std::stoi(args[3]);
+            } catch (...) {
+                std::cout << "Invalid bitrate value\n";
+                return false;
+            }
+        }
+
+        return HandleConvert(args[1], args[2], targetBitrate);
+    }
+    else if (command == "save") {
+        if (args.size() < 2) {
+            std::cout << "Usage: save <output_file>\n";
+            return false;
+        }
+
+        return HandleSave(args[1]);
+    }
     else if (command == "stats") {
         return HandleStats();
     }
@@ -109,6 +136,8 @@ bool CommandLineInterface::ExecuteCommand(const std::vector<std::string>& args) 
                   << "  seek <seconds> - Seek to a specific position\n"
                   << "  eq <f1> <g1> <q1> <f2> <g2> <q2> - Set EQ parameters\n"
                   << "  bitrate <kbps> - Set target bitrate for GPU conversion\n"
+                  << "  convert <input> <output> [bitrate] - Convert file with GPU acceleration\n"
+                  << "  save <file_path> - Save processed audio to file\n"
                   << "  stats - Show performance statistics\n"
                   << "  help - Show this help message\n"
                   << "  quit/exit - Exit the player\n";
@@ -200,6 +229,50 @@ bool CommandLineInterface::HandleBitrate(int targetBitrate) {
         std::cout << "Bitrate conversion successfully applied using GPU\n";
     } else {
         std::cout << "Bitrate conversion failed. Using original audio quality.\n";
+    }
+
+    return success;
+}
+
+bool CommandLineInterface::HandleSave(const std::string& targetPath) {
+    std::cout << "Saving processed audio to: " << targetPath << "\n";
+
+    // In a real implementation, we would call engine.SaveFile(targetPath)
+    bool success = engine.SaveFile(targetPath);
+
+    if (success) {
+        std::cout << "Successfully saved audio to: " << targetPath << "\n";
+    } else {
+        std::cout << "Failed to save audio to: " << targetPath << "\n";
+    }
+
+    return success;
+}
+
+bool CommandLineInterface::HandleConvert(const std::string& inputPath, const std::string& outputPath, int targetBitrate) {
+    std::cout << "Converting: " << inputPath << " -> " << outputPath << "\n";
+
+    // First, load the input file
+    if (!engine.LoadFile(inputPath)) {
+        std::cout << "Failed to load input file: " << inputPath << "\n";
+        return false;
+    }
+
+    // If a target bitrate is specified, apply it
+    if (targetBitrate > 0) {
+        std::cout << "Applying target bitrate: " << targetBitrate << " kbps\n";
+        if (!engine.SetTargetBitrate(targetBitrate)) {
+            std::cout << "Warning: Could not apply target bitrate, using original\n";
+        }
+    }
+
+    // Save the processed audio to the output file
+    bool success = engine.SaveFile(outputPath);
+
+    if (success) {
+        std::cout << "File converted successfully: " << inputPath << " -> " << outputPath << "\n";
+    } else {
+        std::cout << "Conversion failed: " << inputPath << " -> " << outputPath << "\n";
     }
 
     return success;
