@@ -127,10 +127,17 @@ std::vector<std::string> CommandLineInterface::SplitCommand(const std::string& c
 }
 
 bool CommandLineInterface::HandlePlay(const std::string& filePath) {
-    std::cout << "Playing: " << filePath << "\n";
-    // In a real implementation, we would call engine.LoadFile(filePath)
-    // and then engine.Play()
-    return true;
+    std::cout << "Loading file: " << filePath << "\n";
+
+    // Call the engine's LoadFile method
+    if (!engine.LoadFile(filePath)) {
+        return false;
+    }
+
+    std::cout << "Starting playback of " << filePath << "\n";
+
+    // Call the engine's Play method to actually play the audio
+    return engine.Play();
 }
 
 bool CommandLineInterface::HandlePause() {
