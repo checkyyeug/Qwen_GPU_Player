@@ -80,6 +80,20 @@ bool CommandLineInterface::ExecuteCommand(const std::vector<std::string>& args) 
             return false;
         }
     }
+    else if (command == "bitrate") {
+        if (args.size() < 2) {
+            std::cout << "Usage: bitrate <target_kbps>\n";
+            return false;
+        }
+
+        try {
+            int targetBitrate = std::stoi(args[1]);
+            return HandleBitrate(targetBitrate);
+        } catch (...) {
+            std::cout << "Invalid bitrate value\n";
+            return false;
+        }
+    }
     else if (command == "stats") {
         return HandleStats();
     }
@@ -94,6 +108,7 @@ bool CommandLineInterface::ExecuteCommand(const std::vector<std::string>& args) 
                   << "  stop - Stop playback\n"
                   << "  seek <seconds> - Seek to a specific position\n"
                   << "  eq <f1> <g1> <q1> <f2> <g2> <q2> - Set EQ parameters\n"
+                  << "  bitrate <kbps> - Set target bitrate for GPU conversion\n"
                   << "  stats - Show performance statistics\n"
                   << "  help - Show this help message\n"
                   << "  quit/exit - Exit the player\n";
@@ -173,6 +188,21 @@ bool CommandLineInterface::HandleStats() {
     std::string stats = engine.GetStats();
     std::cout << stats;
     return true;
+}
+
+bool CommandLineInterface::HandleBitrate(int targetBitrate) {
+    std::cout << "Setting target bitrate to " << targetBitrate << " kbps using GPU acceleration\n";
+
+    // In a real implementation, we would call engine.SetTargetBitrate(targetBitrate)
+    bool success = engine.SetTargetBitrate(targetBitrate);
+
+    if (success) {
+        std::cout << "Bitrate conversion successfully applied using GPU\n";
+    } else {
+        std::cout << "Bitrate conversion failed. Using original audio quality.\n";
+    }
+
+    return success;
 }
 
 bool CommandLineInterface::HandleQuit() {

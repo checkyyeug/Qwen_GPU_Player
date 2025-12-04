@@ -88,7 +88,14 @@ private:
      * @return true if successful, false otherwise
      */
     bool HandleQuit();
-    
+
+    /**
+     * @brief Handle bitrate command to set target bitrate
+     * @param targetBitrate Target bitrate in kbps
+     * @return true if successful, false otherwise
+     */
+    bool HandleBitrate(int targetBitrate);
+
     // Helper functions for parsing commands
     std::vector<std::string> SplitCommand(const std::string& command);
 };

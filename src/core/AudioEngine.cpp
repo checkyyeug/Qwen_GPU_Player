@@ -7,6 +7,7 @@
 #include <thread>
 #include <chrono>
 #include <cmath>
+#define NOMINMAX  // Prevent Windows from defining min/max macros
 #ifdef _WIN32
 #include <windows.h>
 #include <mmsystem.h>
@@ -45,6 +46,9 @@ public:
     std::thread playbackThread;
     bool shouldStop = false;
 
+    // GPU processor
+    std::unique_ptr<IGPUProcessor> gpuProcessor;
+
 #ifdef ENABLE_FLAC
     // FLAC decoding related data
     std::vector<char> flacBuffer;
@@ -64,8 +68,83 @@ AudioEngine::~AudioEngine() = default;
 #ifdef ENABLE_FLAC
 #include <FLAC/all.h>
 
-// Note: Callbacks are implemented internally in the LoadFile method to avoid access issues
-// The FLAC library is properly linked and available as confirmed by the CMake output
+// Define a structure to pass data to callbacks that avoids accessing private members directly
+struct FlacDecodeData {
+    std::vector<char>* audioBuffer;
+    size_t* sampleRate;
+    unsigned int* channels;
+    unsigned int* bitsPerSample;
+    FLAC__uint64* totalSamples;
+};
+
+// Define FLAC decoder callback functions
+// These callbacks will be used to process FLAC data during decoding
+static FLAC__StreamDecoderWriteStatus flac_write_callback(const FLAC__StreamDecoder *decoder, const FLAC__Frame *frame, const FLAC__int32 *const buffer[], void *client_data) {
+    // Cast the client data to our custom structure
+    FlacDecodeData *data = static_cast<FlacDecodeData*>(client_data);
+    if (!data) return FLAC__STREAM_DECODER_WRITE_STATUS_ABORT;
+
+    // Store audio parameters from the frame if not already set
+    if (*data->sampleRate == 0) {
+        *data->sampleRate = frame->header.sample_rate;
+        *data->channels = frame->header.channels;
+        *data->bitsPerSample = frame->header.bits_per_sample;
+    }
+
+    // Calculate frame size and convert samples
+    unsigned int frame_size = frame->header.blocksize;
+    unsigned int total_samples = frame_size * (*data->channels);
+    unsigned int bytes_per_sample = (*data->bitsPerSample) / 8;
+    unsigned int total_bytes = total_samples * bytes_per_sample;
+
+    std::vector<char> frame_data(total_bytes);
+    char *data_ptr = frame_data.data();
+
+    for (unsigned int sample = 0; sample < frame_size; sample++) {
+        for (unsigned int channel = 0; channel < (*data->channels); channel++) {
+            FLAC__int32 sample_value = buffer[channel][sample];
+
+            if ((*data->bitsPerSample) == 16) {
+                short pcm_value = static_cast<short>(sample_value);
+                *reinterpret_cast<short*>(data_ptr) = pcm_value;
+                data_ptr += sizeof(short);
+            } else if ((*data->bitsPerSample) == 24) {
+                // Handle 24-bit audio by packing as 3 bytes
+                *reinterpret_cast<unsigned char*>(data_ptr) = static_cast<unsigned char>(sample_value & 0xFF);
+                data_ptr++;
+                *reinterpret_cast<unsigned char*>(data_ptr) = static_cast<unsigned char>((sample_value >> 8) & 0xFF);
+                data_ptr++;
+                *reinterpret_cast<unsigned char*>(data_ptr) = static_cast<unsigned char>((sample_value >> 16) & 0xFF);
+                data_ptr++;
+            } else {
+                // Default to 16-bit for other formats
+                short pcm_value = static_cast<short>(sample_value);
+                *reinterpret_cast<short*>(data_ptr) = pcm_value;
+                data_ptr += sizeof(short);
+            }
+        }
+    }
+
+    // Add the frame data to the buffer
+    data->audioBuffer->insert(data->audioBuffer->end(), frame_data.begin(), frame_data.end());
+    return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
+}
+
+static void flac_metadata_callback(const FLAC__StreamDecoder *decoder, const FLAC__StreamMetadata *metadata, void *client_data) {
+    if (metadata->type == FLAC__METADATA_TYPE_STREAMINFO) {
+        FlacDecodeData *data = static_cast<FlacDecodeData*>(client_data);
+        if (!data) return;
+
+        *data->totalSamples = metadata->data.stream_info.total_samples;
+        *data->sampleRate = metadata->data.stream_info.sample_rate;
+        *data->channels = metadata->data.stream_info.channels;
+        *data->bitsPerSample = metadata->data.stream_info.bits_per_sample;
+    }
+}
+
+static void flac_error_callback(const FLAC__StreamDecoder *decoder, FLAC__StreamDecoderErrorStatus status, void *client_data) {
+    std::cout << "FLAC decode error: " << FLAC__StreamDecoderErrorStatusString[status] << std::endl;
+}
 #endif
 
 bool AudioEngine::Initialize(std::unique_ptr<IGPUProcessor> gpuProcessor) {
@@ -74,6 +153,10 @@ bool AudioEngine::Initialize(std::unique_ptr<IGPUProcessor> gpuProcessor) {
         std::cout << "GPU Processor detected and initialized:\n";
         std::cout << gpuProcessor->GetGPUInfo() << "\n";
         std::cout << "Initializing audio engine with GPU support\n";
+
+        // Store the GPU processor for later use
+        pImpl->gpuProcessor = std::move(gpuProcessor);
+
         pImpl->initialized = true;
         return true;
     }
@@ -242,11 +325,78 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
     else if (extension == "flac") {
 #ifdef ENABLE_FLAC
         std::cout << "FLAC file detected: " << filePath << "\n";
-        std::cout << "Note: FLAC support is compiled in and library is linked.\n";
-        std::cout << "This is a placeholder for actual FLAC decoding.\n";
-        // In a complete implementation, we would decode the actual FLAC file content
-        // This requires proper callback implementation that is compatible with the PIMPL pattern
-        return false; // For now, return false to indicate it's not fully implemented
+
+        // Use FLAC library to decode the file
+        FLAC__StreamDecoder *decoder = FLAC__stream_decoder_new();
+        if (!decoder) {
+            std::cout << "Error: Could not create FLAC decoder\n";
+            return false;
+        }
+
+        // Prepare data structure to pass to callbacks
+        FlacDecodeData decodeData;
+        decodeData.audioBuffer = &pImpl->flacBuffer;
+        decodeData.sampleRate = &pImpl->flacSampleRate;
+        decodeData.channels = &pImpl->flacChannels;
+        decodeData.bitsPerSample = &pImpl->flacBitsPerSample;
+        decodeData.totalSamples = &pImpl->flacTotalSamples;
+
+        // Reset values
+        pImpl->flacSampleRate = 0;
+        pImpl->flacChannels = 0;
+        pImpl->flacBitsPerSample = 0;
+        pImpl->flacTotalSamples = 0;
+        pImpl->flacBuffer.clear();
+
+        // Initialize the decoder with the file
+        FLAC__StreamDecoderInitStatus init_status = FLAC__stream_decoder_init_file(
+            decoder,
+            filePath.c_str(),
+            flac_write_callback,
+            flac_metadata_callback,
+            flac_error_callback,
+            &decodeData
+        );
+
+        if (init_status != FLAC__STREAM_DECODER_INIT_STATUS_OK) {
+            std::cout << "Error: Could not initialize FLAC decoder: " <<
+                         FLAC__StreamDecoderInitStatusString[init_status] << "\n";
+            FLAC__stream_decoder_delete(decoder);
+            return false;
+        }
+
+        // Decode the entire file
+        if (!FLAC__stream_decoder_process_until_end_of_stream(decoder)) {
+            std::cout << "Error: FLAC decoding failed\n";
+            FLAC__stream_decoder_delete(decoder);
+            return false;
+        }
+
+        // Clean up
+        FLAC__stream_decoder_finish(decoder);
+        FLAC__stream_decoder_delete(decoder);
+
+        // Copy the decoded data to main audio buffer
+        pImpl->audioData = pImpl->flacBuffer;
+
+        // Set up wave format for the decoded audio
+        pImpl->waveFormat.wFormatTag = WAVE_FORMAT_PCM;
+        pImpl->waveFormat.nChannels = pImpl->flacChannels;
+        pImpl->waveFormat.nSamplesPerSec = pImpl->flacSampleRate;
+        pImpl->waveFormat.wBitsPerSample = pImpl->flacBitsPerSample;
+        pImpl->waveFormat.nBlockAlign = (pImpl->flacChannels * pImpl->flacBitsPerSample) / 8;
+        pImpl->waveFormat.nAvgBytesPerSec = pImpl->flacSampleRate * pImpl->waveFormat.nBlockAlign;
+        pImpl->waveFormat.cbSize = 0;
+
+        pImpl->audioLoaded = true;
+        pImpl->currentFile = filePath;
+
+        std::cout << "FLAC file decoded successfully: " << filePath << "\n";
+        std::cout << "Format: " << pImpl->flacSampleRate << "Hz, "
+                  << pImpl->flacChannels << " channels, "
+                  << pImpl->flacBitsPerSample << " bits\n";
+
+        return true;
 #else
         // Fallback when FLAC support is not compiled in
         std::cout << "FLAC file detected: " << filePath << "\n";
@@ -388,11 +538,74 @@ std::string AudioEngine::GetStats() {
     if (!pImpl->initialized) {
         return "Audio engine not initialized";
     }
-    
+
     // In a real implementation, this would return detailed performance stats
     return "Performance statistics:\n"
             "- CPU usage: 2-4%\n"
             "- GPU usage: 15-25%\n"
             "- Memory usage: 60-80MB\n"
             "- Latency: 2-4ms\n";
+}
+
+bool AudioEngine::SetTargetBitrate(int targetBitrate) {
+    if (!pImpl->initialized) {
+        return false;
+    }
+
+    // Get currently loaded audio data
+    if (pImpl->audioData.empty()) {
+        std::cout << "No audio data loaded for bitrate conversion\n";
+        return false;
+    }
+
+    // Determine the current bitrate based on file size and duration
+    // For now, we'll estimate a typical input bitrate
+    int estimatedInputBitrate = 320; // Standard assumption for high quality audio
+
+    std::cout << "Converting audio bitrate: " << estimatedInputBitrate << "kbps -> " << targetBitrate << "kbps\n";
+
+    // Use GPU to convert the audio data to the target bitrate
+    if (pImpl->gpuProcessor) {
+        // Allocate buffer for converted audio
+        std::vector<float> inputAudio(pImpl->audioData.size());
+        std::vector<float> outputAudio(pImpl->audioData.size());  // Same size initially
+
+        // Convert the char audio data to float for processing
+        for (size_t i = 0; i < pImpl->audioData.size(); i++) {
+            // Convert char to float (this is a simplified conversion)
+            char sample = pImpl->audioData[i];
+            inputAudio[i] = static_cast<float>(sample) / 127.0f;  // Normalize to [-1, 1]
+        }
+
+        // Use GPU processor for bitrate conversion
+        bool success = pImpl->gpuProcessor->ConvertBitrate(
+            inputAudio.data(),
+            estimatedInputBitrate,
+            outputAudio.data(),
+            targetBitrate,
+            inputAudio.size() * sizeof(float)
+        );
+
+        if (success) {
+            // Convert float output back to char buffer
+            pImpl->audioData.resize(outputAudio.size());
+            for (size_t i = 0; i < outputAudio.size(); i++) {
+                float sample = outputAudio[i];
+                // Clamp value to valid range and convert back to char
+                float clampedSample = std::max(-1.0f, std::min(1.0f, sample));
+                pImpl->audioData[i] = static_cast<char>(clampedSample * 127);
+            }
+
+            std::cout << "Audio bitrate converted from " << estimatedInputBitrate
+                      << "kbps to " << targetBitrate << "kbps using GPU\n";
+            return true;
+        } else {
+            std::cout << "GPU bitrate conversion not supported or failed\n";
+            std::cout << "Using original audio data\n";
+            return false;
+        }
+    } else {
+        std::cout << "No GPU processor available for bitrate conversion\n";
+        return false;
+    }
 }
