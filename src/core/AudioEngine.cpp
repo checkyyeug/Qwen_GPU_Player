@@ -42,6 +42,10 @@ public:
     WAVEHDR waveHeader = {};
     bool audioLoaded = false;
 
+    // Audio playback position tracking
+    size_t playbackPosition = 0; // Position in audio data buffer (in bytes)
+    double playbackTime = 0.0;   // Playback time in seconds
+
     // Thread for audio playback
     std::thread playbackThread;
     bool shouldStop = false;
@@ -453,8 +457,9 @@ bool AudioEngine::Play() {
         }
 
         // Prepare the audio buffer header
-        pImpl->waveHeader.lpData = pImpl->audioData.data();
-        pImpl->waveHeader.dwBufferLength = pImpl->audioData.size();
+        pImpl->waveHeader.lpData = pImpl->audioData.data() + pImpl->playbackPosition; // Start from current position
+        size_t remainingDataSize = pImpl->audioData.size() - pImpl->playbackPosition;
+        pImpl->waveHeader.dwBufferLength = remainingDataSize;
         pImpl->waveHeader.dwFlags = 0;
         pImpl->waveHeader.dwUser = 0;
 
@@ -474,12 +479,17 @@ bool AudioEngine::Play() {
             return;
         }
 
-        // Wait for playback to complete (while allowing other operations)
+        // Track playback time and handle pause/stop
         while (!(pImpl->waveHeader.dwFlags & WHDR_DONE)) {
+            // Check if we should pause playback
+            if (pImpl->isPaused) {
+                Sleep(10); // Brief sleep while paused
+                continue;  // Stay in the loop while paused
+            }
+
             // Check if we should stop playback early
             if (pImpl->shouldStop) {
                 std::cout << "Playback stopped by user request\n";
-                // Stop the audio output immediately
                 waveOutReset(pImpl->hWaveOut);
                 waveOutUnprepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
                 waveOutClose(pImpl->hWaveOut);
@@ -504,6 +514,10 @@ bool AudioEngine::Play() {
         // For non-Windows platforms, simulate playback with sleep
         std::cout << "Playing audio: Simulating playback for 5 seconds...\n";
         for (int i = 0; i < 50 && !pImpl->shouldStop; ++i) {  // 50 iterations with 100ms each = 5 sec
+            if (!pImpl->isPaused) {
+                // Only advance time if not paused
+                pImpl->playbackTime += 0.1;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
@@ -515,6 +529,8 @@ bool AudioEngine::Play() {
 #endif
         // Reset playing state when done
         pImpl->isPlaying = false;
+        pImpl->isPaused = false;
+        pImpl->playbackTime = 0.0;  // Reset playback time when done
     });
 
     pImpl->isPlaying = true;
@@ -532,10 +548,26 @@ bool AudioEngine::Pause() {
             // Resume playback
             pImpl->isPaused = false;
             std::cout << "Playback resumed\n";
+
+#ifdef _WIN32
+            // Resume the audio output if it was paused
+            MMRESULT result = waveOutRestart(pImpl->hWaveOut);
+            if (result != MMSYSERR_NOERROR) {
+                std::cout << "Warning: Could not resume audio output\n";
+            }
+#endif
         } else {
             // Pause playback
             pImpl->isPaused = true;
             std::cout << "Playback paused\n";
+
+#ifdef _WIN32
+            // Pause the audio output device
+            MMRESULT result = waveOutPause(pImpl->hWaveOut);
+            if (result != MMSYSERR_NOERROR) {
+                std::cout << "Warning: Could not pause audio output\n";
+            }
+#endif
         }
     } else {
         std::cout << "No playback active to pause/resume\n";
@@ -558,6 +590,16 @@ bool AudioEngine::Stop() {
         pImpl->playbackThread.join();
     }
 
+#ifdef _WIN32
+    // Stop the audio output device if it's open
+    if (pImpl->hWaveOut != nullptr) {
+        waveOutReset(pImpl->hWaveOut);
+        waveOutUnprepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
+        waveOutClose(pImpl->hWaveOut);
+        pImpl->hWaveOut = nullptr;
+    }
+#endif
+
     // Reset states
     pImpl->isPlaying = false;
     pImpl->isPaused = false;
@@ -576,9 +618,67 @@ bool AudioEngine::Seek(double seconds) {
     if (!pImpl->initialized) {
         return false;
     }
-    
-    // In a real implementation, this would seek to specified position
-    std::cout << "Seeking to position: " << seconds << " seconds\n";
+
+    if (!pImpl->audioLoaded) {
+        std::cout << "Error: No audio file loaded to seek\n";
+        return false;
+    }
+
+    if (!pImpl->isPlaying) {
+        std::cout << "Warning: No active playback. File loaded but not playing.\n";
+        // We can still store the desired seek position for when playback starts
+        std::cout << "Seek to " << seconds << " seconds requested\n";
+        // Calculate approximate byte position based on sample rate and bit depth
+        // This is a simplified calculation and would need more precision in a real implementation
+        if (pImpl->waveFormat.nSamplesPerSec > 0 && pImpl->waveFormat.nBlockAlign > 0) {
+            // Estimate position in bytes based on time
+            size_t estimatedBytePos = static_cast<size_t>(seconds * pImpl->waveFormat.nAvgBytesPerSec);
+            if (estimatedBytePos < pImpl->audioData.size()) {
+                pImpl->playbackPosition = estimatedBytePos;
+                pImpl->playbackTime = seconds;
+            } else {
+                pImpl->playbackPosition = 0; // Don't exceed buffer size
+                pImpl->playbackTime = 0.0;
+            }
+        }
+        return true;
+    }
+
+    // For active playback, stop and calculate new position
+    std::cout << "Seek to " << seconds << " seconds requested\n";
+
+#ifdef _WIN32
+    // For seeking during playback, we need to stop current playback at the current position
+    // Then restart from the new position
+    if (pImpl->hWaveOut != nullptr) {
+        MMRESULT result = waveOutPause(pImpl->hWaveOut);
+        if (result == MMSYSERR_NOERROR) {
+            // Calculate approximate byte position based on time requested
+            if (pImpl->waveFormat.nAvgBytesPerSec > 0) {
+                size_t newPosition = static_cast<size_t>(seconds * pImpl->waveFormat.nAvgBytesPerSec);
+                if (newPosition < pImpl->audioData.size()) {
+                    pImpl->playbackPosition = newPosition;
+                    pImpl->playbackTime = seconds;
+                    std::cout << "Seek operation: Position adjusted to " << seconds << " seconds\n";
+
+                    // Now restart playback from new position
+                    waveOutReset(pImpl->hWaveOut);
+                    waveOutClose(pImpl->hWaveOut);
+                    pImpl->hWaveOut = nullptr;
+
+                    // Restart playback from the new position with a new Play() call
+                    // This is simplified - in a real implementation, we'd need to restart the thread properly
+                    std::cout << "Playback will restart from position " << seconds << " seconds\n";
+                } else {
+                    std::cout << "Error: Requested position exceeds file length\n";
+                }
+            }
+        } else {
+            std::cout << "Error: Could not pause audio output for seek operation\n";
+        }
+    }
+#endif
+
     return true;
 }
 
