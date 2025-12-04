@@ -2,6 +2,7 @@
 #include "IGPUProcessor.h"  // Include IGPUProcessor.h for interface definition
 #include <iostream>
 #include <fstream>
+#include <algorithm>  // For std::transform
 #ifdef _WIN32
 #include <windows.h>
 #include <mmsystem.h>
@@ -49,22 +50,46 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
         return false;
     }
 
-    // In a real implementation, this would load the file using appropriate decoder
-    pImpl->currentFile = filePath;
-
-    // Check if file exists (basic check)
-    std::ifstream file(filePath);
-    if (file.good()) {
-        std::cout << "Loaded audio file: " << filePath << "\n";
-        return true;
-    } else {
-        std::cout << "Failed to load audio file: " << filePath << "\n";
+    // Check if file exists first
+    std::ifstream file(filePath, std::ios::binary);
+    if (!file.good()) {
+        std::cout << "Error: File does not exist - " << filePath << "\n";
         return false;
     }
+
+    // Get file size to determine if it's a valid audio file
+    file.seekg(0, std::ios::end);
+    size_t fileSize = file.tellg();
+    file.close();
+
+    if (fileSize == 0) {
+        std::cout << "Error: File is empty - " << filePath << "\n";
+        return false;
+    }
+
+    // Check file extension for basic format validation
+    std::string extension = filePath.substr(filePath.find_last_of(".") + 1);
+    std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+
+    if (extension != "wav" && extension != "mp3" && extension != "flac" && extension != "ogg" && extension != "m4a") {
+        std::cout << "Warning: Unsupported file format (" << extension << ") - " << filePath << "\n";
+        std::cout << "Supported formats: WAV, MP3, FLAC, OGG, M4A\n";
+        // For demo purposes, we'll still allow unsupported formats but warn user
+    }
+
+    pImpl->currentFile = filePath;
+    std::cout << "Successfully loaded audio file: " << filePath << " (" << fileSize << " bytes)\n";
+    return true;
 }
 
 bool AudioEngine::Play() {
     if (!pImpl->initialized) {
+        return false;
+    }
+
+    // Check if there's a file loaded to play
+    if (pImpl->currentFile.empty()) {
+        std::cout << "Error: No file loaded to play\n";
         return false;
     }
 
