@@ -1,6 +1,12 @@
 #include "AudioEngine.h"
 #include "IGPUProcessor.h"  // Include IGPUProcessor.h for interface definition
 #include <iostream>
+#include <fstream>
+#ifdef _WIN32
+#include <windows.h>
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
+#endif
 
 // Implementation of AudioEngine interface
 
@@ -11,6 +17,8 @@ public:
     // Placeholder for actual implementation
     bool initialized = false;
     std::string currentFile;
+    bool isPlaying = false;
+    bool isPaused = false;
 };
 
 AudioEngine::AudioEngine() : pImpl(std::make_unique<Impl>()) {}
@@ -35,20 +43,43 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
     if (!pImpl->initialized) {
         return false;
     }
-    
+
     // In a real implementation, this would load the file using appropriate decoder
     pImpl->currentFile = filePath;
-    std::cout << "Loaded audio file: " << filePath << "\n";
-    return true;
+
+    // Check if file exists (basic check)
+    std::ifstream file(filePath);
+    if (file.good()) {
+        std::cout << "Loaded audio file: " << filePath << "\n";
+        return true;
+    } else {
+        std::cout << "Failed to load audio file: " << filePath << "\n";
+        return false;
+    }
 }
 
 bool AudioEngine::Play() {
     if (!pImpl->initialized) {
         return false;
     }
-    
-    // In a real implementation, this would start playback
+
+    // In a real implementation, this would start actual playback
     std::cout << "Starting playback of " << pImpl->currentFile << "\n";
+
+    // Simulate audio playing for 5 seconds (for demo purposes)
+    pImpl->isPlaying = true;
+    pImpl->isPaused = false;
+
+    // For demonstration, we'll just show a simple progress indicator
+    std::cout << "Playing: ";
+    for(int i = 0; i < 5; ++i) {
+        Sleep(1000); // Wait 1 second (Windows-specific)
+        std::cout << "." << std::flush;
+    }
+    std::cout << "\n";
+
+    pImpl->isPlaying = false;
+    std::cout << "Playback finished\n";
     return true;
 }
 
@@ -56,9 +87,15 @@ bool AudioEngine::Pause() {
     if (!pImpl->initialized) {
         return false;
     }
-    
+
     // In a real implementation, this would pause/resume playback
-    std::cout << "Toggling pause state\n";
+    if (pImpl->isPlaying && !pImpl->isPaused) {
+        pImpl->isPaused = true;
+        std::cout << "Playback paused\n";
+    } else if (pImpl->isPlaying && pImpl->isPaused) {
+        pImpl->isPaused = false;
+        std::cout << "Playback resumed\n";
+    }
     return true;
 }
 
@@ -66,10 +103,12 @@ bool AudioEngine::Stop() {
     if (!pImpl->initialized) {
         return false;
     }
-    
+
     // In a real implementation, this would stop playback and reset engine
+    pImpl->isPlaying = false;
+    pImpl->isPaused = false;
     pImpl->currentFile.clear();
-    std::cout << "Stopping playback\n";
+    std::cout << "Playback stopped\n";
     return true;
 }
 

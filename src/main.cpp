@@ -65,6 +65,10 @@ int main(int argc, char* argv[]) {
 
         player.LoadFile(filePath);
         player.Play();
+
+        // For demo purposes, we'll exit after playing one file
+        std::cout << "Exiting GPU Music Player...\n";
+        return 0;
     }
 
     // Interactive mode - process commands from user input

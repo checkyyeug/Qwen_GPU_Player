@@ -59,9 +59,9 @@ set(SOURCES
 # Create executable
 add_executable(gpu_player ${SOURCES})
 
-# Link Windows libraries for GPU detection
+# Link Windows libraries for GPU detection and audio playback
 if(WIN32)
-    target_link_libraries(gpu_player setupapi.lib gdi32.lib)
+    target_link_libraries(gpu_player setupapi.lib gdi32.lib winmm.lib)
 endif()
 
 # Add definitions for GPU support
