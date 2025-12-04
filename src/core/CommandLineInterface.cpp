@@ -87,6 +87,19 @@ bool CommandLineInterface::ExecuteCommand(const std::vector<std::string>& args) 
         return HandleQuit();
     }
 
+    else if (command == "help") {
+        std::cout << "Available commands:\n"
+                  << "  play <file_path> - Play an audio file\n"
+                  << "  pause/toggle - Pause or resume playback\n"
+                  << "  stop - Stop playback\n"
+                  << "  seek <seconds> - Seek to a specific position\n"
+                  << "  eq <f1> <g1> <q1> <f2> <g2> <q2> - Set EQ parameters\n"
+                  << "  stats - Show performance statistics\n"
+                  << "  help - Show this help message\n"
+                  << "  quit/exit - Exit the player\n";
+        return true;
+    }
+
     // Unknown command
     std::cout << "Unknown command: " << command << "\n";
     std::cout << "Available commands:\n"
@@ -96,6 +109,7 @@ bool CommandLineInterface::ExecuteCommand(const std::vector<std::string>& args) 
               << "  seek <seconds> - Seek to a specific position\n"
               << "  eq <f1> <g1> <q1> <f2> <g2> <q2> - Set EQ parameters\n"
               << "  stats - Show performance statistics\n"
+              << "  help - Show this help message\n"
               << "  quit/exit - Exit the player\n";
     return false;
 }
