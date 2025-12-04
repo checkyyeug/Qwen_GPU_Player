@@ -1,0 +1,6 @@
+# vcpkg configuration
+set(VCPKG_TARGET_TRIPLET x64-windows)
+set(VCPKG_HOST_TRIPLET x64-windows)
+
+# Install required packages
+vcpkg install flac

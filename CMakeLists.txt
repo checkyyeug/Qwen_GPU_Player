@@ -5,6 +5,11 @@ project(GPUMusicPlayer)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Add vcpkg toolchain if available
+if(EXISTS "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
+    set(CMAKE_TOOLCHAIN_FILE $ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake)
+endif()
+
 # Add include directories
 include_directories(include)
 include_directories(src)
@@ -13,16 +18,25 @@ include_directories(src)
 option(ENABLE_FLAC "Enable FLAC support" ON)
 
 if(ENABLE_FLAC)
-    find_library(FLAC_LIB FLAC)
-    find_path(FLAC_INCLUDE_DIR FLAC/all.h)
-
-    if(FLAC_LIB AND FLAC_INCLUDE_DIR)
+    find_package(FLAC CONFIG QUIET)
+    if(FLAC_FOUND)
         target_compile_definitions(gpu_player PRIVATE ENABLE_FLAC=1)
-        target_link_libraries(gpu_player ${FLAC_LIB})
-        target_include_directories(gpu_player PRIVATE ${FLAC_INCLUDE_DIR})
+        target_link_libraries(gpu_player FLAC::FLAC)
+        message(STATUS "FLAC support enabled")
     else()
-        message(WARNING "FLAC library not found. FLAC support will be disabled.")
-        set(ENABLE_FLAC OFF)
+        # Try to find library the traditional way
+        find_library(FLAC_LIB FLAC)
+        find_path(FLAC_INCLUDE_DIR FLAC/all.h)
+
+        if(FLAC_LIB AND FLAC_INCLUDE_DIR)
+            target_compile_definitions(gpu_player PRIVATE ENABLE_FLAC=1)
+            target_link_libraries(gpu_player ${FLAC_LIB})
+            target_include_directories(gpu_player PRIVATE ${FLAC_INCLUDE_DIR})
+            message(STATUS "FLAC support enabled (traditional find)")
+        else()
+            message(WARNING "FLAC library not found. FLAC support will be disabled.")
+            set(ENABLE_FLAC OFF)
+        endif()
     endif()
 endif()
 
