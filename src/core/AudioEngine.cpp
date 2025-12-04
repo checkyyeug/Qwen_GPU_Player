@@ -3,10 +3,19 @@
 #include <iostream>
 #include <fstream>
 #include <algorithm>  // For std::transform
+#include <vector>
+#include <thread>
+#include <chrono>
+#include <cmath>
 #ifdef _WIN32
 #include <windows.h>
 #include <mmsystem.h>
+#include <mmreg.h>
 #pragma comment(lib, "winmm.lib")
+#endif
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
 #endif
 
 // Implementation of AudioEngine interface
@@ -21,10 +30,16 @@ public:
     bool isPlaying = false;
     bool isPaused = false;
 
-#ifdef _WIN32
-    HWAVEOUT hWaveOut;  // Handle to wave output device
-    WAVEHDR waveHeader; // Header for audio data
-#endif
+    // Audio data and parameters
+    std::vector<char> audioData;
+    WAVEFORMATEX waveFormat = {};
+    HWAVEOUT hWaveOut = nullptr;
+    WAVEHDR waveHeader = {};
+    bool audioLoaded = false;
+
+    // Thread for audio playback
+    std::thread playbackThread;
+    bool shouldStop = false;
 };
 
 AudioEngine::AudioEngine() : pImpl(std::make_unique<Impl>()) {}
@@ -74,12 +89,133 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
     if (extension != "wav" && extension != "mp3" && extension != "flac" && extension != "ogg" && extension != "m4a") {
         std::cout << "Warning: Unsupported file format (" << extension << ") - " << filePath << "\n";
         std::cout << "Supported formats: WAV, MP3, FLAC, OGG, M4A\n";
-        // For demo purposes, we'll still allow unsupported formats but warn user
+        std::cout << "Only WAV format is currently implemented for playback\n";
+        // For demo purposes, we'll try to load WAV files, others will use tone generation
+        if (extension != "wav") {
+            std::cout << "Will generate a tone instead of playing the file\n";
+            // Generate a tone to simulate playback for non-WAV files
+            // Generate simple sine wave data for demonstration
+            const int sampleRate = 44100;
+            const int channels = 2; // Stereo
+            const int bitsPerSample = 16;
+            const int bytesPerSample = bitsPerSample / 8;
+            const int frequency = 440; // A4 note
+            const int durationSeconds = 2;
+
+            int numSamples = sampleRate * durationSeconds;
+            int totalBytes = numSamples * channels * bytesPerSample;
+
+            // Resize audio data vector
+            pImpl->audioData.resize(totalBytes);
+
+            // Create simple sine wave
+            for (int i = 0; i < numSamples; ++i) {
+                double time = static_cast<double>(i) / sampleRate;
+                double value = std::sin(2.0 * M_PI * frequency * time);
+
+                // Convert to 16-bit signed integer
+                short sample = static_cast<short>(value * 32767);
+
+                // Write to audio data (stereo)
+                int offset = i * channels * bytesPerSample;
+                memcpy(&pImpl->audioData[offset], &sample, bytesPerSample);
+                memcpy(&pImpl->audioData[offset + bytesPerSample], &sample, bytesPerSample);
+            }
+
+            // Set up wave format for the generated tone
+            pImpl->waveFormat.wFormatTag = WAVE_FORMAT_PCM;
+            pImpl->waveFormat.nChannels = channels;
+            pImpl->waveFormat.nSamplesPerSec = sampleRate;
+            pImpl->waveFormat.nAvgBytesPerSec = sampleRate * channels * bytesPerSample;
+            pImpl->waveFormat.nBlockAlign = channels * bytesPerSample;
+            pImpl->waveFormat.wBitsPerSample = bitsPerSample;
+            pImpl->waveFormat.cbSize = 0;
+
+            pImpl->audioLoaded = true;
+            pImpl->currentFile = filePath;
+            return true;
+        }
     }
 
-    pImpl->currentFile = filePath;
-    std::cout << "Successfully loaded audio file: " << filePath << " (" << fileSize << " bytes)\n";
-    return true;
+    if (extension == "wav") {
+        std::ifstream wavFile(filePath, std::ios::binary);
+        if (!wavFile.is_open()) {
+            std::cout << "Error: Could not open WAV file - " << filePath << "\n";
+            return false;
+        }
+
+        // Read WAV header
+        char chunkId[4];
+        wavFile.read(chunkId, 4);
+        if (std::string(chunkId, 4) != "RIFF") {
+            std::cout << "Error: Invalid WAV file format - " << filePath << "\n";
+            wavFile.close();
+            return false;
+        }
+
+        wavFile.seekg(20); // Skip to format data
+        short audioFormat;
+        wavFile.read(reinterpret_cast<char*>(&audioFormat), sizeof(audioFormat));
+
+        if (audioFormat != 1) { // PCM format
+            std::cout << "Error: Only PCM WAV format is supported - " << filePath << "\n";
+            wavFile.close();
+            return false;
+        }
+
+        short numChannels;
+        wavFile.read(reinterpret_cast<char*>(&numChannels), sizeof(numChannels));
+
+        int sampleRate;
+        wavFile.read(reinterpret_cast<char*>(&sampleRate), sizeof(sampleRate));
+
+        wavFile.seekg(34); // Skip to bits per sample
+        short bitsPerSample;
+        wavFile.read(reinterpret_cast<char*>(&bitsPerSample), sizeof(bitsPerSample));
+
+        // Find data chunk
+        char dataChunk[4];
+        int chunkSize;
+        bool foundData = false;
+        wavFile.seekg(36); // Start looking for data chunk after the format info
+
+        while (wavFile.read(dataChunk, 4)) {
+            wavFile.read(reinterpret_cast<char*>(&chunkSize), sizeof(chunkSize));
+            if (std::string(dataChunk, 4) == "data") {
+                foundData = true;
+                break;
+            }
+            wavFile.seekg(chunkSize, std::ios::cur);
+        }
+
+        if (!foundData) {
+            std::cout << "Error: No data chunk found in WAV file - " << filePath << "\n";
+            wavFile.close();
+            return false;
+        }
+
+        // Read audio data
+        pImpl->audioData.resize(chunkSize);
+        wavFile.read(pImpl->audioData.data(), chunkSize);
+        wavFile.close();
+
+        // Set up wave format
+        pImpl->waveFormat.wFormatTag = WAVE_FORMAT_PCM;
+        pImpl->waveFormat.nChannels = numChannels;
+        pImpl->waveFormat.nSamplesPerSec = sampleRate;
+        pImpl->waveFormat.wBitsPerSample = bitsPerSample;
+        pImpl->waveFormat.nBlockAlign = (numChannels * bitsPerSample) / 8;
+        pImpl->waveFormat.nAvgBytesPerSec = sampleRate * pImpl->waveFormat.nBlockAlign;
+        pImpl->waveFormat.cbSize = 0;
+
+        pImpl->audioLoaded = true;
+        pImpl->currentFile = filePath;
+        std::cout << "Successfully loaded WAV file: " << filePath << " (" << fileSize << " bytes)\n";
+        return true;
+    } else {
+        std::cout << "Error: Format not implemented for playback - " << filePath << "\n";
+        return false;
+    }
 }
 
 bool AudioEngine::Play() {
@@ -96,22 +232,52 @@ bool AudioEngine::Play() {
     // In a real implementation, this would start actual playback
     std::cout << "Starting playback of " << pImpl->currentFile << "\n";
 
-#ifdef _WIN32
-    // For demonstration purposes, we'll create simple sine wave audio data
-    // This is just to show that audio can be played
-
-    // Create a simple 1-second tone (440 Hz) for testing
-    const int sampleRate = 44100;
-    const int durationSeconds = 2; // Play for 2 seconds
-    const int totalSamples = sampleRate * durationSeconds;
-
-    std::cout << "Playing audio: Generating " << durationSeconds << " second tone at 440 Hz\n";
-
-    // Simulate actual playback by showing progress
-    for(int i = 0; i < durationSeconds; ++i) {
-        Sleep(1000); // Wait 1 second (Windows-specific)
-        std::cout << "Playing: " << (i+1) << "/" << durationSeconds << " seconds\n";
+    if (!pImpl->audioLoaded) {
+        std::cout << "Error: No audio data loaded\n";
+        return false;
     }
+
+#ifdef _WIN32
+    // Initialize the audio output device
+    MMRESULT result = waveOutOpen(&pImpl->hWaveOut, WAVE_MAPPER, &pImpl->waveFormat, 0, 0, CALLBACK_NULL);
+    if (result != MMSYSERR_NOERROR) {
+        std::cout << "Error: Could not open audio output device\n";
+        return false;
+    }
+
+    // Prepare the audio buffer header
+    pImpl->waveHeader.lpData = pImpl->audioData.data();
+    pImpl->waveHeader.dwBufferLength = pImpl->audioData.size();
+    pImpl->waveHeader.dwFlags = 0;
+    pImpl->waveHeader.dwUser = 0;
+
+    result = waveOutPrepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
+    if (result != MMSYSERR_NOERROR) {
+        std::cout << "Error: Could not prepare audio header\n";
+        waveOutClose(pImpl->hWaveOut);
+        return false;
+    }
+
+    // Write the audio data to the device
+    result = waveOutWrite(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
+    if (result != MMSYSERR_NOERROR) {
+        std::cout << "Error: Could not write audio data\n";
+        waveOutUnprepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
+        waveOutClose(pImpl->hWaveOut);
+        return false;
+    }
+
+    std::cout << "Playing audio: Actual playback started\n";
+
+    // Wait for playback to complete
+    while (!(pImpl->waveHeader.dwFlags & WHDR_DONE)) {
+        Sleep(10); // Sleep briefly to prevent busy waiting
+    }
+
+    // Cleanup
+    waveOutUnprepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
+    waveOutClose(pImpl->hWaveOut);
+    pImpl->hWaveOut = nullptr;
 
     std::cout << "Playback finished\n";
 #else
