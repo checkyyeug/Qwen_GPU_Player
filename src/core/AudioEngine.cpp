@@ -384,57 +384,9 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
 #else
         // Fallback when FLAC support is not compiled in
         std::cout << "FLAC file detected: " << filePath << "\n";
-        std::cout << "Note: FLAC support not compiled in. Using demonstration audio.\n";
-
-        // For fallback, create audio based on file properties
-        const int sampleRate = 44100;
-        const int channels = 2; // Stereo
-        const int bitsPerSample = 16;
-        const int bytesPerSample = bitsPerSample / 8;
-        const int durationSeconds = 4; // Base duration
-        int numSamples = sampleRate * durationSeconds;
-
-        // Create a more complex audio pattern based on file properties to make it less 'fixed'
-        double frequency1 = 300.0 + (fileSize % 200); // Vary base frequency based on file size
-        double frequency2 = 500.0 + (fileSize % 300); // Vary second frequency
-
-        int totalBytes = numSamples * channels * bytesPerSample;
-        pImpl->audioData.resize(totalBytes);
-
-        for (int i = 0; i < numSamples; ++i) {
-            double time = static_cast<double>(i) / sampleRate;
-            // Create a more complex waveform instead of simple tone
-            double value1 = 0.4 * std::sin(2.0 * M_PI * frequency1 * time);
-            double value2 = 0.3 * std::sin(2.0 * M_PI * frequency2 * time);
-            double value3 = 0.3 * std::sin(2.0 * M_PI * (frequency1 * 1.5) * time);
-            double value = value1 + value2 + value3;
-
-            // Limit to range [-1, 1]
-            if (value > 1.0) value = 1.0;
-            if (value < -1.0) value = -1.0;
-
-            // Convert to 16-bit signed integer
-            short sample = static_cast<short>(value * 32767);
-
-            // Write to audio data (stereo)
-            int offset = i * channels * bytesPerSample;
-            memcpy(&pImpl->audioData[offset], &sample, bytesPerSample);
-            memcpy(&pImpl->audioData[offset + bytesPerSample], &sample, bytesPerSample);
-        }
-
-        // Set up wave format for the generated tone
-        pImpl->waveFormat.wFormatTag = WAVE_FORMAT_PCM;
-        pImpl->waveFormat.nChannels = channels;
-        pImpl->waveFormat.nSamplesPerSec = sampleRate;
-        pImpl->waveFormat.nAvgBytesPerSec = sampleRate * channels * bytesPerSample;
-        pImpl->waveFormat.nBlockAlign = channels * bytesPerSample;
-        pImpl->waveFormat.wBitsPerSample = bitsPerSample;
-        pImpl->waveFormat.cbSize = 0;
-
-        pImpl->audioLoaded = true;
-        pImpl->currentFile = filePath;
-        std::cout << "Loaded FLAC file with fallback method: " << filePath << " (" << fileSize << " bytes)\n";
-        return true;
+        std::cout << "Error: FLAC support not compiled in. FLAC library not found.\n";
+        std::cout << "To enable FLAC support, install FLAC development libraries.\n";
+        return false;  // Return false to indicate loading failed
 #endif
     } else {
         std::cout << "Error: Format not implemented for playback - " << filePath << "\n";
