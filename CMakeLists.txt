@@ -1,0 +1,82 @@
+cmake_minimum_required(VERSION 3.16)
+project(GPUMusicPlayer)
+
+# Set C++ standard to C++17
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Add include directories
+include_directories(include)
+include_directories(src)
+
+# Add definitions for GPU support
+option(ENABLE_CUDA "Enable CUDA support" OFF)
+option(ENABLE_OPENCL "Enable OpenCL support" OFF)
+option(ENABLE_VULKAN "Enable Vulkan support" OFF)
+
+if(ENABLE_CUDA)
+    find_package(CUDAToolkit QUIET)
+    if(CUDAToolkit_FOUND)
+        target_compile_definitions(gpu_player PRIVATE ENABLE_CUDA=1)
+        enable_language(CUDA)
+    endif()
+endif()
+
+if(ENABLE_OPENCL)
+    find_package(OpenCL QUIET)
+    if(OpenCL_FOUND)
+        target_compile_definitions(gpu_player PRIVATE ENABLE_OPENCL=1)
+        target_link_libraries(gpu_player ${OpenCL_LIBRARIES})
+        target_include_directories(gpu_player PRIVATE ${OpenCL_INCLUDE_DIRS})
+    endif()
+endif()
+
+if(ENABLE_VULKAN)
+    find_package(Vulkan QUIET)
+    if(Vulkan_FOUND)
+        target_compile_definitions(gpu_player PRIVATE ENABLE_VULKAN=1)
+        target_link_libraries(gpu_player ${Vulkan_LIBRARIES})
+        target_include_directories(gpu_player PRIVATE ${Vulkan_INCLUDE_DIRS})
+    endif()
+endif()
+
+# Find required packages
+find_package(Threads REQUIRED)
+
+# For now, we'll skip FFmpeg dependency check and use a simple approach for testing
+
+# Add source files - explicitly list all the necessary ones
+set(SOURCES
+    src/main.cpp
+    src/core/AudioEngine.cpp
+    src/core/CommandLineInterface.cpp
+    src/decoders/DecoderFactory.cpp
+    src/decoders/MP3Decoder.cpp
+    src/gpu/GPUProcessorFactory.cpp
+    src/audio/AudioDeviceDriver.cpp
+)
+
+# Create executable
+add_executable(gpu_player ${SOURCES})
+
+# Link Windows libraries for GPU detection
+if(WIN32)
+    target_link_libraries(gpu_player setupapi.lib gdi32.lib)
+endif()
+
+# Add definitions for GPU support
+option(ENABLE_CUDA "Enable CUDA support" OFF)
+option(ENABLE_OPENCL "Enable OpenCL support" OFF)
+option(ENABLE_VULKAN "Enable Vulkan support" OFF)
+
+if(ENABLE_CUDA)
+    target_compile_definitions(gpu_player PRIVATE ENABLE_CUDA=1)
+endif()
+
+if(ENABLE_OPENCL)
+    target_compile_definitions(gpu_player PRIVATE ENABLE_OPENCL=1)
+endif()
+
+if(ENABLE_VULKAN)
+    target_compile_definitions(gpu_player PRIVATE ENABLE_VULKAN=1)
+endif()

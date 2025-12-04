@@ -1,0 +1,98 @@
+#ifndef AUDIO_ENGINE_H
+#define AUDIO_ENGINE_H
+
+#include <string>
+#include <memory>  // Added for std::unique_ptr
+
+// Forward declarations for interfaces
+class IGPUProcessor;
+class IAudioDecoder;
+class IAudioDevice;
+
+/**
+ * @brief Main audio engine interface that coordinates all components
+ */
+class AudioEngine {
+public:
+    /**
+     * @brief Constructor
+     */
+    AudioEngine();
+
+    /**
+     * @brief Destructor
+     */
+    virtual ~AudioEngine();
+
+    /**
+     * @brief Initialize the audio engine with specified parameters
+     * @param gpuProcessor The GPU processor to use for acceleration
+     * @return true if initialization was successful, false otherwise
+     */
+    bool Initialize(std::unique_ptr<IGPUProcessor> gpuProcessor);
+
+    /**
+     * @brief Load an audio file for playback
+     * @param filePath Path to the audio file
+     * @return true if loading was successful, false otherwise
+     */
+    bool LoadFile(const std::string& filePath);
+
+    /**
+     * @brief Start playing the loaded audio file
+     * @return true if playback started successfully, false otherwise
+     */
+    bool Play();
+
+    /**
+     * @brief Pause or resume playback
+     * @return true if operation was successful, false otherwise
+     */
+    bool Pause();
+
+    /**
+     * @brief Stop playback and reset the engine
+     * @return true if operation was successful, false otherwise
+     */
+    bool Stop();
+
+    /**
+     * @brief Seek to a specific position in the audio file (in seconds)
+     * @param seconds Position to seek to
+     * @return true if seeking was successful, false otherwise
+     */
+    bool Seek(double seconds);
+
+    /**
+     * @brief Set EQ parameters for audio processing
+     * @param freq1 Low frequency point
+     * @param gain1 Low frequency gain adjustment
+     * @param q1 Low frequency Q value
+     * @param freq2 High frequency point
+     * @param gain2 High frequency gain adjustment
+     * @param q2 High frequency Q value
+     * @return true if parameters were set successfully, false otherwise
+     */
+    bool SetEQ(double freq1, double gain1, double q1,
+                double freq2, double gain2, double q2);
+
+
+    /**
+     * @brief Get performance statistics including GPU information
+     * @return String with performance stats
+     */
+    std::string GetStats();
+
+    /**
+     * @brief Set processing parameters for audio engine
+     * @param params Processing parameters to apply
+     */
+    void SetProcessingParams(const struct ProcessingParams& params);
+
+private:
+    // Private implementation details
+    class Impl;
+    std::unique_ptr<Impl> pImpl;
+};
+
+#endif // AUDIO_ENGINE_H
