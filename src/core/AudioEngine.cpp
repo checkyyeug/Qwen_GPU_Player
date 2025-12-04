@@ -18,6 +18,10 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+#ifdef ENABLE_FLAC
+#include <FLAC/all.h>
+#endif
+
 // Implementation of AudioEngine interface
 
 class AudioEngine::Impl {
@@ -40,11 +44,107 @@ public:
     // Thread for audio playback
     std::thread playbackThread;
     bool shouldStop = false;
+
+#ifdef ENABLE_FLAC
+    // FLAC decoding related data
+    std::vector<char> flacBuffer;
+    size_t flacSampleRate = 0;
+    unsigned int flacChannels = 0;
+    unsigned int flacBitsPerSample = 0;
+    FLAC__uint64 flacTotalSamples = 0;
+    bool isFlacFile = false;
+#endif
 };
 
 AudioEngine::AudioEngine() : pImpl(std::make_unique<Impl>()) {}
 
 AudioEngine::~AudioEngine() = default;
+
+// FLAC decoding callbacks (only defined if FLAC support is enabled)
+#ifdef ENABLE_FLAC
+static FLAC__StreamDecoderReadStatus flac_read_callback(const FLAC__StreamDecoder *decoder, FLAC__byte buffer[], size_t *bytes, void *client_data) {
+    std::ifstream *file = static_cast<std::ifstream*>(client_data);
+    if (file->eof()) {
+        *bytes = 0;
+        return FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
+    }
+
+    file->read(reinterpret_cast<char*>(buffer), *bytes);
+    *bytes = file->gcount();
+
+    if (file->bad()) {
+        return FLAC__STREAM_DECODER_READ_STATUS_ABORT;
+    }
+
+    return *bytes > 0 ? FLAC__STREAM_DECODER_READ_STATUS_CONTINUE : FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
+}
+
+static FLAC__StreamDecoderWriteStatus flac_write_callback(const FLAC__StreamDecoder *decoder, const FLAC__Frame *frame, const FLAC__int32 *const buffer[], void *client_data) {
+    AudioEngine::Impl *impl = static_cast<AudioEngine::Impl*>(client_data);
+
+    // Store audio parameters from the frame
+    if (impl->flacSampleRate == 0) {
+        impl->flacSampleRate = frame->header.sample_rate;
+        impl->flacChannels = frame->header.channels;
+        impl->flacBitsPerSample = frame->header.bits_per_sample;
+    }
+
+    // Calculate frame size
+    unsigned int frame_size = frame->header.blocksize;  // samples per channel
+    unsigned int total_samples = frame_size * impl->flacChannels;  // total samples in frame
+    unsigned int bytes_per_sample = impl->flacBitsPerSample / 8;
+    unsigned int total_bytes = total_samples * bytes_per_sample;
+
+    // Convert FLAC samples to PCM data and append to buffer
+    std::vector<char> frame_data(total_bytes);
+    char *data_ptr = frame_data.data();
+
+    for (unsigned int sample = 0; sample < frame_size; sample++) {
+        for (unsigned int channel = 0; channel < impl->flacChannels; channel++) {
+            FLAC__int32 sample_value = buffer[channel][sample];
+
+            // Clamp to appropriate bit depth
+            if (impl->flacBitsPerSample == 16) {
+                short pcm_value = static_cast<short>(sample_value);
+                *reinterpret_cast<short*>(data_ptr) = pcm_value;
+                data_ptr += sizeof(short);
+            } else if (impl->flacBitsPerSample == 24) {
+                // For 24-bit, we'll pack as 3 bytes
+                *reinterpret_cast<unsigned char*>(data_ptr) = static_cast<unsigned char>(sample_value & 0xFF);
+                data_ptr++;
+                *reinterpret_cast<unsigned char*>(data_ptr) = static_cast<unsigned char>((sample_value >> 8) & 0xFF);
+                data_ptr++;
+                *reinterpret_cast<unsigned char*>(data_ptr) = static_cast<unsigned char>((sample_value >> 16) & 0xFF);
+                data_ptr++;
+            } else {
+                // Default to 16-bit for other depths
+                short pcm_value = static_cast<short>(sample_value);
+                *reinterpret_cast<short*>(data_ptr) = pcm_value;
+                data_ptr += sizeof(short);
+            }
+        }
+    }
+
+    // Append to main buffer
+    impl->flacBuffer.insert(impl->flacBuffer.end(), frame_data.begin(), frame_data.end());
+
+    return FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
+}
+
+static void flac_metadata_callback(const FLAC__StreamDecoder *decoder, const FLAC__StreamMetadata *metadata, void *client_data) {
+    if (metadata->type == FLAC__METADATA_TYPE_STREAMINFO) {
+        AudioEngine::Impl *impl = static_cast<AudioEngine::Impl*>(client_data);
+        impl->flacTotalSamples = metadata->data.stream_info.total_samples;
+        impl->flacSampleRate = metadata->data.stream_info.sample_rate;
+        impl->flacChannels = metadata->data.stream_info.channels;
+        impl->flacBitsPerSample = metadata->data.stream_info.bits_per_sample;
+    }
+}
+
+static void flac_error_callback(const FLAC__StreamDecoder *decoder, FLAC__StreamDecoderErrorStatus status, void *client_data) {
+    std::cout << "FLAC decode error: " << FLAC__StreamDecoderErrorStatusString[status] << std::endl;
+}
+#endif
 
 bool AudioEngine::Initialize(std::unique_ptr<IGPUProcessor> gpuProcessor) {
     // Initialize with GPU processor
@@ -218,19 +318,75 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
         return true;
     }
     else if (extension == "flac") {
-        // In a real implementation, we would decode the FLAC file using libFLAC
+#ifdef ENABLE_FLAC
+        // Initialize the FLAC decoder
+        FLAC__StreamDecoder *decoder = FLAC__stream_decoder_new();
+        if (!decoder) {
+            std::cout << "Error: Could not create FLAC decoder\n";
+            return false;
+        }
+
+        // Set up callbacks
+        FLAC__StreamDecoderInitStatus init_status = FLAC__stream_decoder_init_file(
+            decoder,
+            filePath.c_str(),
+            flac_write_callback,
+            flac_metadata_callback,
+            flac_error_callback,
+            pImpl.get()
+        );
+
+        if (init_status != FLAC__STREAM_DECODER_INIT_STATUS_OK) {
+            std::cout << "Error: Could not initialize FLAC decoder: " <<
+                         FLAC__StreamDecoderInitStatusString[init_status] << "\n";
+            FLAC__stream_decoder_delete(decoder);
+            return false;
+        }
+
+        // Reset the buffer
+        pImpl->flacBuffer.clear();
+        pImpl->audioData.clear();
+
+        // Decode the entire file
+        if (!FLAC__stream_decoder_process_until_end_of_stream(decoder)) {
+            std::cout << "Error: FLAC decoding failed\n";
+            FLAC__stream_decoder_delete(decoder);
+            return false;
+        }
+
+        // Finish decoding
+        FLAC__stream_decoder_finish(decoder);
+
+        // Copy decoded data to main audio buffer
+        pImpl->audioData = pImpl->flacBuffer;
+
+        // Set up wave format for the decoded audio
+        pImpl->waveFormat.wFormatTag = WAVE_FORMAT_PCM;
+        pImpl->waveFormat.nChannels = pImpl->flacChannels;
+        pImpl->waveFormat.nSamplesPerSec = pImpl->flacSampleRate;
+        pImpl->waveFormat.wBitsPerSample = pImpl->flacBitsPerSample;
+        pImpl->waveFormat.nBlockAlign = (pImpl->flacChannels * pImpl->flacBitsPerSample) / 8;
+        pImpl->waveFormat.nAvgBytesPerSec = pImpl->flacSampleRate * pImpl->waveFormat.nBlockAlign;
+        pImpl->waveFormat.cbSize = 0;
+
+        pImpl->audioLoaded = true;
+        pImpl->currentFile = filePath;
+        pImpl->isFlacFile = true;
+
+        std::cout << "Successfully decoded FLAC file: " << filePath
+                  << " (" << pImpl->audioData.size() << " bytes of audio data)\n";
+        std::cout << "Format: " << pImpl->flacSampleRate << "Hz, "
+                  << pImpl->flacChannels << " channels, "
+                  << pImpl->flacBitsPerSample << " bits\n";
+
+        FLAC__stream_decoder_delete(decoder);
+        return true;
+#else
+        // Fallback when FLAC support is not compiled in
         std::cout << "FLAC file detected: " << filePath << "\n";
+        std::cout << "Note: FLAC support not compiled in. Using demonstration audio.\n";
 
-        // Framework for actual FLAC decoding
-        std::cout << "Note: Full FLAC support requires libFLAC integration\n";
-        std::cout << "For now, demonstrating framework for actual FLAC decoding: " << filePath << "\n";
-
-        // FOR DEMONSTRATION ONLY: In a real implementation, we would decode the actual FLAC content
-        // This is placeholder code that should be replaced with actual libFLAC integration
-        std::cout << "In actual implementation, would decode: " << filePath << "\n";
-
-        // For now, we'll use a more complex approach to make it less 'fixed' based on file properties
-        // In real implementation, we'd decode the actual FLAC file content
+        // For fallback, create audio based on file properties
         const int sampleRate = 44100;
         const int channels = 2; // Stereo
         const int bitsPerSample = 16;
@@ -239,7 +395,6 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
         int numSamples = sampleRate * durationSeconds;
 
         // Create a more complex audio pattern based on file properties to make it less 'fixed'
-        // This is just for demonstration - real implementation would decode actual content
         double frequency1 = 300.0 + (fileSize % 200); // Vary base frequency based on file size
         double frequency2 = 500.0 + (fileSize % 300); // Vary second frequency
 
@@ -267,7 +422,7 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
             memcpy(&pImpl->audioData[offset + bytesPerSample], &sample, bytesPerSample);
         }
 
-        // Set up wave format for the decoded audio
+        // Set up wave format for the generated tone
         pImpl->waveFormat.wFormatTag = WAVE_FORMAT_PCM;
         pImpl->waveFormat.nChannels = channels;
         pImpl->waveFormat.nSamplesPerSec = sampleRate;
@@ -278,8 +433,9 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
 
         pImpl->audioLoaded = true;
         pImpl->currentFile = filePath;
-        std::cout << "Framework loaded FLAC file: " << filePath << " (would decode " << fileSize << " bytes)\n";
+        std::cout << "Loaded FLAC file with fallback method: " << filePath << " (" << fileSize << " bytes)\n";
         return true;
+#endif
     } else {
         std::cout << "Error: Format not implemented for playback - " << filePath << "\n";
         return false;

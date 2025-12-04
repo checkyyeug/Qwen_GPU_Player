@@ -9,6 +9,23 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include_directories(include)
 include_directories(src)
 
+# Add definitions for audio format support
+option(ENABLE_FLAC "Enable FLAC support" ON)
+
+if(ENABLE_FLAC)
+    find_library(FLAC_LIB FLAC)
+    find_path(FLAC_INCLUDE_DIR FLAC/all.h)
+
+    if(FLAC_LIB AND FLAC_INCLUDE_DIR)
+        target_compile_definitions(gpu_player PRIVATE ENABLE_FLAC=1)
+        target_link_libraries(gpu_player ${FLAC_LIB})
+        target_include_directories(gpu_player PRIVATE ${FLAC_INCLUDE_DIR})
+    else()
+        message(WARNING "FLAC library not found. FLAC support will be disabled.")
+        set(ENABLE_FLAC OFF)
+    endif()
+endif()
+
 # Add definitions for GPU support
 option(ENABLE_CUDA "Enable CUDA support" OFF)
 option(ENABLE_OPENCL "Enable OpenCL support" OFF)
@@ -62,21 +79,4 @@ add_executable(gpu_player ${SOURCES})
 # Link Windows libraries for GPU detection and audio playback
 if(WIN32)
     target_link_libraries(gpu_player setupapi.lib gdi32.lib winmm.lib)
-endif()
-
-# Add definitions for GPU support
-option(ENABLE_CUDA "Enable CUDA support" OFF)
-option(ENABLE_OPENCL "Enable OpenCL support" OFF)
-option(ENABLE_VULKAN "Enable Vulkan support" OFF)
-
-if(ENABLE_CUDA)
-    target_compile_definitions(gpu_player PRIVATE ENABLE_CUDA=1)
-endif()
-
-if(ENABLE_OPENCL)
-    target_compile_definitions(gpu_player PRIVATE ENABLE_OPENCL=1)
-endif()
-
-if(ENABLE_VULKAN)
-    target_compile_definitions(gpu_player PRIVATE ENABLE_VULKAN=1)
 endif()
