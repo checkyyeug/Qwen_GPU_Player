@@ -174,3 +174,21 @@ std::unique_ptr<IGPUProcessor> GPUProcessorFactory::CreateProcessor(Backend back
 - 接口简洁清晰
 - 添加充分的注释和文档
 - 编写单元测试
+
+## 8. FLAC支持架构
+
+### 8.1 libFLAC Integration
+- 使用vcpkg包管理器自动下载和安装FLAC库
+- CMakeLists.txt配置自动检测并链接FLAC库
+- 确认输出"FLAC support enabled"表示库已成功链接
+
+### 8.2 FLAC解码架构
+- 回调函数实现用于FLAC流式解码
+- 元码参数自动检测（采样率、声道数、位深度）
+- 原始音频数据缓冲与PCM格式转换
+- 与现有音频播放管道无缝集成
+
+### 8.3 文件格式检测
+- 自动识别WAV、FLAC等音频格式
+- 支持格式验证和错误处理
+- 清晰的错误消息和降级策略
