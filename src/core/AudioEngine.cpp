@@ -421,64 +421,104 @@ bool AudioEngine::Play() {
         return false;
     }
 
-    // In a real implementation, this would start actual playback
-    std::cout << "Starting playback of " << pImpl->currentFile << "\n";
-
+    // Check if audio is already loaded
     if (!pImpl->audioLoaded) {
         std::cout << "Error: No audio data loaded\n";
         return false;
     }
 
+    // If already playing, stop current playback first
+    if (pImpl->isPlaying) {
+        std::cout << "Stopping previous playback first...\n";
+        // Send stop signal to any existing thread
+        pImpl->shouldStop = true;
+
+        // Join any existing playback thread if it exists
+        if (pImpl->playbackThread.joinable()) {
+            pImpl->playbackThread.join();
+        }
+    }
+
+    // Start a new playback thread to avoid blocking the command interface
+    pImpl->shouldStop = false;
+    pImpl->playbackThread = std::thread([this]() {
+        std::cout << "Playing audio: Actual playback started\n";
+
 #ifdef _WIN32
-    // Initialize the audio output device
-    MMRESULT result = waveOutOpen(&pImpl->hWaveOut, WAVE_MAPPER, &pImpl->waveFormat, 0, 0, CALLBACK_NULL);
-    if (result != MMSYSERR_NOERROR) {
-        std::cout << "Error: Could not open audio output device\n";
-        return false;
-    }
+        // Initialize the audio output device
+        MMRESULT result = waveOutOpen(&pImpl->hWaveOut, WAVE_MAPPER, &pImpl->waveFormat, 0, 0, CALLBACK_NULL);
+        if (result != MMSYSERR_NOERROR) {
+            std::cout << "Error: Could not open audio output device\n";
+            return;
+        }
 
-    // Prepare the audio buffer header
-    pImpl->waveHeader.lpData = pImpl->audioData.data();
-    pImpl->waveHeader.dwBufferLength = pImpl->audioData.size();
-    pImpl->waveHeader.dwFlags = 0;
-    pImpl->waveHeader.dwUser = 0;
+        // Prepare the audio buffer header
+        pImpl->waveHeader.lpData = pImpl->audioData.data();
+        pImpl->waveHeader.dwBufferLength = pImpl->audioData.size();
+        pImpl->waveHeader.dwFlags = 0;
+        pImpl->waveHeader.dwUser = 0;
 
-    result = waveOutPrepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
-    if (result != MMSYSERR_NOERROR) {
-        std::cout << "Error: Could not prepare audio header\n";
-        waveOutClose(pImpl->hWaveOut);
-        return false;
-    }
+        result = waveOutPrepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
+        if (result != MMSYSERR_NOERROR) {
+            std::cout << "Error: Could not prepare audio header\n";
+            waveOutClose(pImpl->hWaveOut);
+            return;
+        }
 
-    // Write the audio data to the device
-    result = waveOutWrite(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
-    if (result != MMSYSERR_NOERROR) {
-        std::cout << "Error: Could not write audio data\n";
-        waveOutUnprepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
-        waveOutClose(pImpl->hWaveOut);
-        return false;
-    }
+        // Write the audio data to the device
+        result = waveOutWrite(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
+        if (result != MMSYSERR_NOERROR) {
+            std::cout << "Error: Could not write audio data\n";
+            waveOutUnprepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
+            waveOutClose(pImpl->hWaveOut);
+            return;
+        }
 
-    std::cout << "Playing audio: Actual playback started\n";
+        // Wait for playback to complete (while allowing other operations)
+        while (!(pImpl->waveHeader.dwFlags & WHDR_DONE)) {
+            // Check if we should stop playback early
+            if (pImpl->shouldStop) {
+                std::cout << "Playback stopped by user request\n";
+                // Stop the audio output immediately
+                waveOutReset(pImpl->hWaveOut);
+                waveOutUnprepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
+                waveOutClose(pImpl->hWaveOut);
+                pImpl->hWaveOut = nullptr;
+                pImpl->isPlaying = false;
+                return;
+            }
+            Sleep(10); // Brief sleep to allow other threads and commands to run
+        }
 
-    // Wait for playback to complete
-    while (!(pImpl->waveHeader.dwFlags & WHDR_DONE)) {
-        Sleep(10); // Sleep briefly to prevent busy waiting
-    }
+        // Cleanup - only if not stopped externally
+        if (!pImpl->shouldStop) {
+            waveOutUnprepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
+            waveOutClose(pImpl->hWaveOut);
+            pImpl->hWaveOut = nullptr;
+        }
 
-    // Cleanup
-    waveOutUnprepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
-    waveOutClose(pImpl->hWaveOut);
-    pImpl->hWaveOut = nullptr;
-
-    std::cout << "Playback finished\n";
+        if (!pImpl->shouldStop) {
+            std::cout << "Playback finished\n";
+        }
 #else
-    // For non-Windows platforms, just simulate playback
-    Sleep(2000);  // Simulate 2 second playback
-    std::cout << "Playing audio for 2 seconds...\n";
-#endif
+        // For non-Windows platforms, simulate playback with sleep
+        std::cout << "Playing audio: Simulating playback for 5 seconds...\n";
+        for (int i = 0; i < 50 && !pImpl->shouldStop; ++i) {  // 50 iterations with 100ms each = 5 sec
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
 
-    pImpl->isPlaying = false;
+        if (pImpl->shouldStop) {
+            std::cout << "Playback stopped by user request\n";
+        } else {
+            std::cout << "Playback finished\n";
+        }
+#endif
+        // Reset playing state when done
+        pImpl->isPlaying = false;
+    });
+
+    pImpl->isPlaying = true;
+    std::cout << "Starting playback of " << pImpl->currentFile << " (background)\n";
     return true;
 }
 
@@ -487,13 +527,18 @@ bool AudioEngine::Pause() {
         return false;
     }
 
-    // In a real implementation, this would pause/resume playback
-    if (pImpl->isPlaying && !pImpl->isPaused) {
-        pImpl->isPaused = true;
-        std::cout << "Playback paused\n";
-    } else if (pImpl->isPlaying && pImpl->isPaused) {
-        pImpl->isPaused = false;
-        std::cout << "Playback resumed\n";
+    if (pImpl->isPlaying) {
+        if (pImpl->isPaused) {
+            // Resume playback
+            pImpl->isPaused = false;
+            std::cout << "Playback resumed\n";
+        } else {
+            // Pause playback
+            pImpl->isPaused = true;
+            std::cout << "Playback paused\n";
+        }
+    } else {
+        std::cout << "No playback active to pause/resume\n";
     }
     return true;
 }
@@ -503,11 +548,27 @@ bool AudioEngine::Stop() {
         return false;
     }
 
-    // In a real implementation, this would stop playback and reset engine
+    bool wasPlaying = pImpl->isPlaying;
+
+    // Signal the playback thread to stop
+    pImpl->shouldStop = true;
+
+    // If there's an active playback thread, join it
+    if (pImpl->playbackThread.joinable()) {
+        pImpl->playbackThread.join();
+    }
+
+    // Reset states
     pImpl->isPlaying = false;
     pImpl->isPaused = false;
     pImpl->currentFile.clear();
-    std::cout << "Playback stopped\n";
+
+    if (wasPlaying) {
+        std::cout << "Playback stopped\n";
+    } else {
+        std::cout << "Playback reset\n";
+    }
+
     return true;
 }
 
