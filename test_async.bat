@@ -1,0 +1,9 @@
+@echo off
+echo Testing asynchronous playback...
+echo.
+echo Launching GPU Player and initiating playback...
+start "" /B .\build\Release\gpu_player.exe test_audio.wav
+timeout /t 3
+echo Stopping any running instances...
+taskkill /F /IM gpu_player.exe 2>nul
+echo Test complete.

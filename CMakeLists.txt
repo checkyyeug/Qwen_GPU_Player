@@ -14,6 +14,20 @@ endif()
 include_directories(include)
 include_directories(src)
 
+# Add source files - explicitly list all the necessary ones
+set(SOURCES
+    src/main.cpp
+    src/core/AudioEngine.cpp
+    src/core/CommandLineInterface.cpp
+    src/decoders/DecoderFactory.cpp
+    src/decoders/MP3Decoder.cpp
+    src/gpu/GPUProcessorFactory.cpp
+    src/audio/AudioDeviceDriver.cpp
+)
+
+# Create executable
+add_executable(gpu_player ${SOURCES})
+
 # Add definitions for audio format support
 option(ENABLE_FLAC "Enable FLAC support" ON)
 
@@ -24,18 +38,26 @@ if(ENABLE_FLAC)
         target_link_libraries(gpu_player FLAC::FLAC)
         message(STATUS "FLAC support enabled")
     else()
-        # Try to find library the traditional way
-        find_library(FLAC_LIB FLAC)
-        find_path(FLAC_INCLUDE_DIR FLAC/all.h)
-
-        if(FLAC_LIB AND FLAC_INCLUDE_DIR)
+        # Try alternative package name for vcpkg
+        find_package(libflac CONFIG QUIET)
+        if(libflac_FOUND)
             target_compile_definitions(gpu_player PRIVATE ENABLE_FLAC=1)
-            target_link_libraries(gpu_player ${FLAC_LIB})
-            target_include_directories(gpu_player PRIVATE ${FLAC_INCLUDE_DIR})
-            message(STATUS "FLAC support enabled (traditional find)")
+            target_link_libraries(gpu_player libflac::libflac)
+            message(STATUS "FLAC support enabled via libflac")
         else()
-            message(WARNING "FLAC library not found. FLAC support will be disabled.")
-            set(ENABLE_FLAC OFF)
+            # Try to find library the traditional way
+            find_library(FLAC_LIB FLAC)
+            find_path(FLAC_INCLUDE_DIR FLAC/all.h)
+
+            if(FLAC_LIB AND FLAC_INCLUDE_DIR)
+                target_compile_definitions(gpu_player PRIVATE ENABLE_FLAC=1)
+                target_link_libraries(gpu_player ${FLAC_LIB})
+                target_include_directories(gpu_player PRIVATE ${FLAC_INCLUDE_DIR})
+                message(STATUS "FLAC support enabled (traditional find)")
+            else()
+                message(WARNING "FLAC library not found. FLAC support will be disabled.")
+                set(ENABLE_FLAC OFF)
+            endif()
         endif()
     endif()
 endif()
@@ -73,22 +95,6 @@ endif()
 
 # Find required packages
 find_package(Threads REQUIRED)
-
-# For now, we'll skip FFmpeg dependency check and use a simple approach for testing
-
-# Add source files - explicitly list all the necessary ones
-set(SOURCES
-    src/main.cpp
-    src/core/AudioEngine.cpp
-    src/core/CommandLineInterface.cpp
-    src/decoders/DecoderFactory.cpp
-    src/decoders/MP3Decoder.cpp
-    src/gpu/GPUProcessorFactory.cpp
-    src/audio/AudioDeviceDriver.cpp
-)
-
-# Create executable
-add_executable(gpu_player ${SOURCES})
 
 # Link Windows libraries for GPU detection and audio playback
 if(WIN32)

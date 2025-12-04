@@ -89,6 +89,20 @@ public:
      */
     void SetProcessingParams(const struct ProcessingParams& params);
 
+    /**
+     * @brief Set target bitrate for audio processing (with GPU acceleration)
+     * @param targetBitrate Target bitrate in kbps
+     * @return true if bitrate conversion was successful, false otherwise
+     */
+    bool SetTargetBitrate(int targetBitrate);
+
+    /**
+     * @brief Save processed audio to a file
+     * @param filePath Path where the processed audio file should be saved
+     * @return true if save was successful, false otherwise
+     */
+    bool SaveFile(const std::string& filePath);
+
 private:
     // Private implementation details
     class Impl;

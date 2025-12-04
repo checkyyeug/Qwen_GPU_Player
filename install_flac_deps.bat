@@ -25,9 +25,9 @@ REM Bootstrap vcpkg
 echo Bootstrapping vcpkg...
 call bootstrap-vcpkg.bat
 
-REM Install FLAC
+REM Install FLAC - correct package name is libflac
 echo Installing FLAC library for x64 Windows...
-call vcpkg install flac:x64-windows
+call vcpkg install libflac:x64-windows
 
 REM Set environment variable for CMake
 echo.

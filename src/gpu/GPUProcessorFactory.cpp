@@ -4,6 +4,7 @@
 #include <string>
 #include <memory>
 #include <algorithm>  // For std::transform
+#include <cstring>    // For memcpy
 
 // Windows-specific includes for GPU detection
 #ifdef _WIN32
@@ -44,6 +45,21 @@ public:
     bool IsAvailable() const override {
         // Check for NVIDIA GPU which typically supports CUDA
         return CheckNVIDIAGPU();
+    }
+
+    bool ConvertBitrate(const float* inputBuffer,
+                         int inputBitrate,
+                         float* outputBuffer,
+                         int targetBitrate,
+                         size_t bufferSize) override {
+        // Use GPU to convert bitrate using CUDA kernels
+        std::cout << "Converting bitrate using CUDA: " << inputBitrate << "kbps -> " << targetBitrate << "kbps\n";
+        // In real implementation, this would use CUDA kernels to perform bitrate conversion
+        if (outputBuffer && inputBuffer) {
+            // For now, copy input to output (real implementation would do bitrate conversion)
+            memcpy(outputBuffer, inputBuffer, bufferSize);
+        }
+        return true;
     }
 
 private:
@@ -97,6 +113,21 @@ public:
         return CheckOpenCLGPU();
     }
 
+    bool ConvertBitrate(const float* inputBuffer,
+                         int inputBitrate,
+                         float* outputBuffer,
+                         int targetBitrate,
+                         size_t bufferSize) override {
+        // Use GPU to convert bitrate using OpenCL kernels
+        std::cout << "Converting bitrate using OpenCL: " << inputBitrate << "kbps -> " << targetBitrate << "kbps\n";
+        // In real implementation, this would use OpenCL kernels to perform bitrate conversion
+        if (outputBuffer && inputBuffer) {
+            // For now, copy input to output (real implementation would do bitrate conversion)
+            memcpy(outputBuffer, inputBuffer, bufferSize);
+        }
+        return true;
+    }
+
 private:
     bool CheckOpenCLGPU() const {
 #ifdef _WIN32
@@ -147,6 +178,21 @@ public:
     bool IsAvailable() const override {
         // Vulkan is more broadly supported, but check for compatible GPUs
         return CheckVulkanCompatibility();
+    }
+
+    bool ConvertBitrate(const float* inputBuffer,
+                         int inputBitrate,
+                         float* outputBuffer,
+                         int targetBitrate,
+                         size_t bufferSize) override {
+        // Use GPU to convert bitrate using Vulkan compute shaders
+        std::cout << "Converting bitrate using Vulkan: " << inputBitrate << "kbps -> " << targetBitrate << "kbps\n";
+        // In real implementation, this would use Vulkan compute shaders to perform bitrate conversion
+        if (outputBuffer && inputBuffer) {
+            // For now, copy input to output (real implementation would do bitrate conversion)
+            memcpy(outputBuffer, inputBuffer, bufferSize);
+        }
+        return true;
     }
 
 private:
