@@ -212,6 +212,54 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
         pImpl->currentFile = filePath;
         std::cout << "Successfully loaded WAV file: " << filePath << " (" << fileSize << " bytes)\n";
         return true;
+    }
+    else if (extension == "flac") {
+        // In a real implementation, we would decode the FLAC file using libFLAC
+        // For now, we'll simulate FLAC decoding by generating a tone
+        std::cout << "FLAC file detected: " << filePath << "\n";
+        std::cout << "Note: Full FLAC support requires libFLAC integration\n";
+
+        // Generate a tone to simulate playback for FLAC files
+        const int sampleRate = 44100;
+        const int channels = 2; // Stereo
+        const int bitsPerSample = 16;
+        const int bytesPerSample = bitsPerSample / 8;
+        const int frequency = 523; // C5 note - different from WAV default
+        const int durationSeconds = 3; // Slightly longer for FLAC demo
+
+        int numSamples = sampleRate * durationSeconds;
+        int totalBytes = numSamples * channels * bytesPerSample;
+
+        // Resize audio data vector
+        pImpl->audioData.resize(totalBytes);
+
+        // Create simple sine wave
+        for (int i = 0; i < numSamples; ++i) {
+            double time = static_cast<double>(i) / sampleRate;
+            double value = std::sin(2.0 * M_PI * frequency * time);
+
+            // Convert to 16-bit signed integer with some variation for demonstration
+            short sample = static_cast<short>(value * 32767 * (1.0 - i * 1.0 / numSamples * 0.1)); // Slight volume decrease
+
+            // Write to audio data (stereo)
+            int offset = i * channels * bytesPerSample;
+            memcpy(&pImpl->audioData[offset], &sample, bytesPerSample);
+            memcpy(&pImpl->audioData[offset + bytesPerSample], &sample, bytesPerSample);
+        }
+
+        // Set up wave format for the generated tone
+        pImpl->waveFormat.wFormatTag = WAVE_FORMAT_PCM;
+        pImpl->waveFormat.nChannels = channels;
+        pImpl->waveFormat.nSamplesPerSec = sampleRate;
+        pImpl->waveFormat.nAvgBytesPerSec = sampleRate * channels * bytesPerSample;
+        pImpl->waveFormat.nBlockAlign = channels * bytesPerSample;
+        pImpl->waveFormat.wBitsPerSample = bitsPerSample;
+        pImpl->waveFormat.cbSize = 0;
+
+        pImpl->audioLoaded = true;
+        pImpl->currentFile = filePath;
+        std::cout << "Loaded FLAC file with simulated decoding: " << filePath << " (" << fileSize << " bytes)\n";
+        return true;
     } else {
         std::cout << "Error: Format not implemented for playback - " << filePath << "\n";
         return false;
