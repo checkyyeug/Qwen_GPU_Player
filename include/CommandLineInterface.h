@@ -44,7 +44,14 @@ private:
      * @return true if successful, false otherwise
      */
     bool HandlePlay(const std::string& filePath);
-    
+
+    /**
+     * @brief Handle load command with file path argument
+     * @param filePath Path to the audio file to load
+     * @return true if successful, false otherwise
+     */
+    bool HandleLoad(const std::string& filePath);
+
     /**
      * @brief Handle pause command
      * @return true if successful, false otherwise

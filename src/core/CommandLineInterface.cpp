@@ -40,6 +40,13 @@ bool CommandLineInterface::ExecuteCommand(const std::vector<std::string>& args) 
         }
         return HandlePlay(args[1]);
     }
+    else if (command == "load") {
+        if (args.size() < 2) {
+            std::cout << "Usage: load <file_path>\n";
+            return false;
+        }
+        return HandleLoad(args[1]);
+    }
     else if (command == "pause" || command == "toggle") {
         return HandlePause();
     }
@@ -121,6 +128,14 @@ bool CommandLineInterface::ExecuteCommand(const std::vector<std::string>& args) 
 
         return HandleSave(args[1]);
     }
+    else if (command == "load") {
+        if (args.size() < 2) {
+            std::cout << "Usage: load <file_path>\n";
+            return false;
+        }
+
+        return HandleLoad(args[1]);
+    }
     else if (command == "stats") {
         return HandleStats();
     }
@@ -131,6 +146,7 @@ bool CommandLineInterface::ExecuteCommand(const std::vector<std::string>& args) 
     else if (command == "help") {
         std::cout << "Available commands:\n"
                   << "  play <file_path> - Play an audio file\n"
+                  << "  load <file_path> - Load an audio file without playing\n"
                   << "  pause/toggle - Pause or resume playback\n"
                   << "  stop - Stop playback\n"
                   << "  seek <seconds> - Seek to a specific position\n"
@@ -273,6 +289,23 @@ bool CommandLineInterface::HandleConvert(const std::string& inputPath, const std
         std::cout << "File converted successfully: " << inputPath << " -> " << outputPath << "\n";
     } else {
         std::cout << "Conversion failed: " << inputPath << " -> " << outputPath << "\n";
+    }
+
+    return success;
+}
+
+bool CommandLineInterface::HandleLoad(const std::string& filePath) {
+    std::cout << "Loading file: " << filePath << "\n";
+
+    // Just call the engine's LoadFile method - this will load the audio data
+    // without automatically starting playback
+    bool success = engine.LoadFile(filePath);
+
+    if (success) {
+        std::cout << "File loaded successfully: " << filePath << "\n";
+        std::cout << "Use 'play' command to start playback or other commands for processing\n";
+    } else {
+        std::cout << "Failed to load file: " << filePath << "\n";
     }
 
     return success;
