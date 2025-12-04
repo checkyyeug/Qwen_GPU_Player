@@ -94,7 +94,6 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
         if (extension != "wav") {
             std::cout << "Will generate a tone instead of playing the file\n";
             // Generate a tone to simulate playback for non-WAV files
-            // Generate simple sine wave data for demonstration
             const int sampleRate = 44100;
             const int channels = 2; // Stereo
             const int bitsPerSample = 16;
@@ -153,6 +152,7 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
             return false;
         }
 
+        // Read the complete file header to get format info
         wavFile.seekg(20); // Skip to format data
         short audioFormat;
         wavFile.read(reinterpret_cast<char*>(&audioFormat), sizeof(audioFormat));
@@ -179,12 +179,16 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
         bool foundData = false;
         wavFile.seekg(36); // Start looking for data chunk after the format info
 
-        while (wavFile.read(dataChunk, 4)) {
+        while (wavFile.good()) {
+            wavFile.read(dataChunk, 4);
+            if (!wavFile.good()) break;
+
             wavFile.read(reinterpret_cast<char*>(&chunkSize), sizeof(chunkSize));
             if (std::string(dataChunk, 4) == "data") {
                 foundData = true;
                 break;
             }
+            // Skip this chunk and continue
             wavFile.seekg(chunkSize, std::ios::cur);
         }
 
@@ -194,12 +198,12 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
             return false;
         }
 
-        // Read audio data
+        // Read audio data from the data chunk
         pImpl->audioData.resize(chunkSize);
         wavFile.read(pImpl->audioData.data(), chunkSize);
         wavFile.close();
 
-        // Set up wave format
+        // Set up wave format based on the actual file
         pImpl->waveFormat.wFormatTag = WAVE_FORMAT_PCM;
         pImpl->waveFormat.nChannels = numChannels;
         pImpl->waveFormat.nSamplesPerSec = sampleRate;
@@ -210,14 +214,16 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
 
         pImpl->audioLoaded = true;
         pImpl->currentFile = filePath;
-        std::cout << "Successfully loaded WAV file: " << filePath << " (" << fileSize << " bytes)\n";
+        std::cout << "Successfully loaded WAV file: " << filePath << " (" << chunkSize << " bytes of audio data)\n";
         return true;
     }
     else if (extension == "flac") {
         // In a real implementation, we would decode the FLAC file using libFLAC
         // For now, we'll simulate FLAC decoding by generating a tone
+        // But this is just placeholder - in real implementation we'd decode actual FLAC content
         std::cout << "FLAC file detected: " << filePath << "\n";
         std::cout << "Note: Full FLAC support requires libFLAC integration\n";
+        std::cout << "For now, generating demonstration audio for: " << filePath << "\n";
 
         // Generate a tone to simulate playback for FLAC files
         const int sampleRate = 44100;
