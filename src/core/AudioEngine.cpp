@@ -495,19 +495,22 @@ bool AudioEngine::Play() {
         // Track playback time and handle pause/stop
         while (!(pImpl->waveHeader.dwFlags & WHDR_DONE)) {
             // Check if we should pause playback
-            if (pImpl->isPaused) {
-                Sleep(10); // Brief sleep while paused
+            if (pImpl->isPaused.load()) {
+                // Give more control to pause
+                Sleep(50); // Longer sleep while paused to reduce CPU usage
                 continue;  // Stay in the loop while paused
             }
 
             // Check if we should stop playback early
-            if (pImpl->shouldStop) {
+            if (pImpl->shouldStop.load()) {
                 std::cout << "Playback stopped by user request\n";
                 waveOutReset(pImpl->hWaveOut);
                 waveOutUnprepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
                 waveOutClose(pImpl->hWaveOut);
                 pImpl->hWaveOut = nullptr;
-                pImpl->isPlaying = false;
+
+                // Use atomic operation
+                pImpl->isPlaying.store(false);
                 return;
             }
             Sleep(10); // Brief sleep to allow other threads and commands to run
@@ -556,15 +559,34 @@ bool AudioEngine::Pause() {
         return false;
     }
 
-    // Use atomic operations to safely access and update pause state
-    if (pImpl->isPlaying.load()) {  // Atomic read
+    if (pImpl->isPlaying.load()) {
         bool pausedValue = pImpl->isPaused.load();  // Atomic read
-        pImpl->isPaused.store(!pausedValue);        // Atomic write
+        pImpl->isPaused.store(!pausedValue);        // Toggle with atomic write
 
-        if (pausedValue) {
-            std::cout << "Playback resumed\n";
-        } else {
+        if (!pausedValue) {
             std::cout << "Playback paused\n";
+
+#ifdef _WIN32
+            // Actually pause the audio output device if we have it
+            if (pImpl->hWaveOut) {
+                MMRESULT result = waveOutPause(pImpl->hWaveOut);
+                if (result != MMSYSERR_NOERROR) {
+                    std::cout << "Warning: Could not pause audio output\n";
+                }
+#endif
+            }
+        } else {
+            std::cout << "Playback resumed\n";
+
+#ifdef _WIN32
+            // Actually resume the audio output device
+            if (pImpl->hWaveOut) {
+                MMRESULT result = waveOutRestart(pImpl->hWaveOut);
+                if (result != MMSYSERR_NOERROR) {
+                    std::cout << "Warning: Could not resume audio output\n";
+                }
+#endif
+            }
         }
     } else {
         std::cout << "No playback active to pause/resume\n";
@@ -577,36 +599,35 @@ bool AudioEngine::Stop() {
         return false;
     }
 
-    // Use mutex to protect shared state manipulation
-    std::lock_guard<std::mutex> lock(pImpl->audioEngineMutex);
-
-    bool wasPlaying = pImpl->isPlaying;
-    bool wasPaused = pImpl->isPaused;
+    // Check current state before acquiring lock
+    bool wasPlaying = pImpl->isPlaying.load();  // Use atomic access
+    bool wasPaused = pImpl->isPaused.load();    // Use atomic access
 
     // Signal the playback thread to stop
     pImpl->shouldStop = true;
 
     // If there's an active playback thread, join it
     if (pImpl->playbackThread.joinable()) {
+        // Wait a short moment for the thread to process the stop signal
         pImpl->playbackThread.join();
     }
 
 #ifdef _WIN32
     // Stop the audio output device if it's open
     if (pImpl->hWaveOut != nullptr) {
-        waveOutReset(pImpl->hWaveOut);
+        waveOutReset(pImpl->hWaveOut);  // Immediately stop any playback
         waveOutUnprepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
         waveOutClose(pImpl->hWaveOut);
         pImpl->hWaveOut = nullptr;
     }
 #endif
 
-    // Reset states
-    pImpl->isPlaying = false;
-    pImpl->isPaused = false;
-    pImpl->currentFile.clear();
+    // Use atomic operations to reset states
+    pImpl->isPlaying.store(false);
+    pImpl->isPaused.store(false);
     pImpl->playbackPosition = 0;
     pImpl->playbackTime = 0.0;
+    pImpl->currentFile.clear();
 
     if (wasPlaying || wasPaused) {
         std::cout << "Playback stopped\n";
@@ -966,4 +987,20 @@ bool AudioEngine::IsFileLoaded() const {
 
     // Check if we have a file loaded and audio data available
     return !pImpl->currentFile.empty() && pImpl->audioLoaded && !pImpl->audioData.empty();
+}
+
+bool AudioEngine::IsPlaying() const {
+    if (!pImpl->initialized) {
+        return false;
+    }
+
+    return pImpl->isPlaying.load();
+}
+
+bool AudioEngine::IsPaused() const {
+    if (!pImpl->initialized) {
+        return false;
+    }
+
+    return pImpl->isPaused.load();
 }

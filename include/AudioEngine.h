@@ -96,6 +96,18 @@ public:
     bool IsFileLoaded() const;
 
     /**
+     * @brief Get current playback state
+     * @return true if currently playing audio, false otherwise
+     */
+    bool IsPlaying() const;
+
+    /**
+     * @brief Get current pause state
+     * @return true if paused, false otherwise
+     */
+    bool IsPaused() const;
+
+    /**
      * @brief Set processing parameters for audio engine
      * @param params Processing parameters to apply
      */
