@@ -32,8 +32,8 @@ public:
     // Placeholder for actual implementation
     bool initialized = false;
     std::string currentFile;
-    bool isPlaying = false;
-    bool isPaused = false;
+    std::atomic<bool> isPlaying{false};
+    std::atomic<bool> isPaused{false};
 
     // Audio data and parameters
     std::vector<char> audioData;
@@ -556,38 +556,15 @@ bool AudioEngine::Pause() {
         return false;
     }
 
-    // Use mutex to protect shared state manipulation
-    std::lock_guard<std::mutex> lock(pImpl->audioEngineMutex);
+    // Use atomic operations to safely access and update pause state
+    if (pImpl->isPlaying.load()) {  // Atomic read
+        bool pausedValue = pImpl->isPaused.load();  // Atomic read
+        pImpl->isPaused.store(!pausedValue);        // Atomic write
 
-    if (pImpl->isPlaying) {
-        if (pImpl->isPaused) {
-            // Resume playback
-            pImpl->isPaused = false;
+        if (pausedValue) {
             std::cout << "Playback resumed\n";
-
-#ifdef _WIN32
-            // Resume the audio output if it was paused
-            if (pImpl->hWaveOut) {
-                MMRESULT result = waveOutRestart(pImpl->hWaveOut);
-                if (result != MMSYSERR_NOERROR) {
-                    std::cout << "Warning: Could not resume audio output\n";
-                }
-            }
-#endif
         } else {
-            // Pause playback
-            pImpl->isPaused = true;
             std::cout << "Playback paused\n";
-
-#ifdef _WIN32
-            // Pause the audio output device
-            if (pImpl->hWaveOut) {
-                MMRESULT result = waveOutPause(pImpl->hWaveOut);
-                if (result != MMSYSERR_NOERROR) {
-                    std::cout << "Warning: Could not pause audio output\n";
-                }
-            }
-#endif
         }
     } else {
         std::cout << "No playback active to pause/resume\n";
