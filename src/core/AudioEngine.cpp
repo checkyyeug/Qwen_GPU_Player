@@ -61,12 +61,11 @@ public:
 #ifdef ENABLE_FLAC
     // FLAC decoding related data
     std::vector<char> flacBuffer;
-    std::atomic<size_t> flacSampleRate{0};
-    std::atomic<unsigned int> flacChannels{0};
-    std::atomic<unsigned int> flacBitsPerSample{0};
-    std::atomic<FLAC__uint64> flacTotalSamples{0};
+    size_t flacSampleRate = 0;
+    unsigned int flacChannels = 0;
+    unsigned int flacBitsPerSample = 0;
+    FLAC__uint64 flacTotalSamples = 0;
     bool isFlacFile = false;
-#endif
 };
 
 AudioEngine::AudioEngine() : pImpl(std::make_unique<Impl>()) {}
@@ -1032,3 +1031,5 @@ bool AudioEngine::IsPaused() const {
 
     return pImpl->isPaused.load();
 }
+
+#endif // ENABLE_FLAC 
