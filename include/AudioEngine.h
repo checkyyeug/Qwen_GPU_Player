@@ -7,6 +7,22 @@
 #include <mutex>    // Added for std::mutex and std::atomic
 #include <atomic>   // Added for std::atomic
 
+// Include GPU processor interface first
+#include "IGPUProcessor.h"
+
+/**
+ * @brief Processing parameters structure for audio engine
+ */
+struct ProcessingParams {
+    double sampleRate = 44100.0;      // Target sample rate
+    double bitrate = 320.0;          // Target bitrate in kbps
+    double volume = 1.0;             // Volume level (0.0-1.0)
+    bool enableEQ = false;          // Enable EQ processing
+    bool enableGPU = true;           // Enable GPU acceleration
+    bool enableResampling = false;   // Enable sample rate conversion
+    int gpuQueuePriority = 1;        // GPU queue priority (0-3)
+};
+
 // Forward declaration for GPU interface
 class IGPUProcessor;
 
@@ -111,7 +127,7 @@ public:
      * @brief Set processing parameters for audio engine
      * @param params Processing parameters to apply
      */
-    void SetProcessingParams(const struct ProcessingParams& params);
+    void SetProcessingParams(const struct AudioProcessingParams& params);
 
     /**
      * @brief Set target bitrate for audio processing (with GPU acceleration)

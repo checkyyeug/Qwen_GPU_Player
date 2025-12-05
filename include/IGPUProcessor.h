@@ -5,6 +5,30 @@
 #include <memory>
 
 /**
+ * @brief Audio processing parameters structure for advanced GPU processing
+ */
+struct AudioProcessingParams {
+    // EQ parameters
+    double lowFreq;        // Low frequency point
+    double lowGain;        // Low frequency gain adjustment
+    double lowQ;           // Low frequency Q value
+    double highFreq;       // High frequency point
+    double highGain;       // High frequency gain adjustment
+    double highQ;          // High frequency Q value
+
+    // Format parameters
+    int targetSampleRate;  // Target sample rate
+    int targetBitrate;    // Target bitrate
+    int bitDepth;         // Target bit depth
+
+    // Performance parameters
+    int quality;          // Quality level (0-10)
+    bool enableFilters;   // Whether to enable filters
+    bool enableResampling; // Whether to enable sample rate conversion
+    bool enableBitrateConversion; // Whether to enable bitrate conversion
+};
+
+/**
  * @brief GPU Processor interface for audio processing acceleration
  */
 class IGPUProcessor {
@@ -79,9 +103,22 @@ public:
                                int inputBitrate,
                                float* outputBuffer,
                                int targetBitrate,
-                               size_t bufferSize) {
-        // Default implementation returns false - needs to be overridden
-        return false;
+                               size_t bufferSize) = 0;
+
+    /**
+     * @brief Process audio with specified parameters using GPU acceleration
+     * @param inputBuffer Input audio buffer
+     * @param outputBuffer Output audio buffer (should be pre-allocated)
+     * @param bufferSize Size of buffers in samples
+     * @param parameters Processing parameters (EQ, filters, etc.)
+     * @return true if processing was successful, false otherwise
+     */
+    virtual bool ProcessAudioWithParams(const float* inputBuffer,
+                                       float* outputBuffer,
+                                       size_t bufferSize,
+                                       const struct AudioProcessingParams& parameters) {
+        // Default implementation falls back to basic ProcessAudio
+        return ProcessAudio(inputBuffer, outputBuffer, bufferSize);
     }
 
     /**
