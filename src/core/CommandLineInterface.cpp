@@ -128,14 +128,6 @@ bool CommandLineInterface::ExecuteCommand(const std::vector<std::string>& args) 
 
         return HandleSave(args[1]);
     }
-    else if (command == "load") {
-        if (args.size() < 2) {
-            std::cout << "Usage: load <file_path>\n";
-            return false;
-        }
-
-        return HandleLoad(args[1]);
-    }
     else if (command == "stats") {
         return HandleStats();
     }

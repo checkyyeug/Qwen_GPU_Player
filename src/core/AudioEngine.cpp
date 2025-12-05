@@ -48,10 +48,13 @@ public:
 
     // Thread for audio playback
     std::thread playbackThread;
-    bool shouldStop = false;
+    std::atomic<bool> shouldStop{false};
 
     // GPU processor
     std::unique_ptr<IGPUProcessor> gpuProcessor;
+
+    // Thread synchronization mutex
+    mutable std::mutex audioEngineMutex;
 
 #ifdef ENABLE_FLAC
     // FLAC decoding related data
@@ -369,19 +372,29 @@ bool AudioEngine::LoadFile(const std::string& filePath) {
             return false;
         }
 
-        // Decode the entire file
-        if (!FLAC__stream_decoder_process_until_end_of_stream(decoder)) {
+        // Decode the entire file with proper error checking
+        FLAC__bool decode_result = FLAC__stream_decoder_process_until_end_of_stream(decoder);
+        if (!decode_result) {
             std::cout << "Error: FLAC decoding failed\n";
+            FLAC__stream_decoder_finish(decoder);
             FLAC__stream_decoder_delete(decoder);
             return false;
         }
 
-        // Clean up
+        // Clean up resources properly
         FLAC__stream_decoder_finish(decoder);
         FLAC__stream_decoder_delete(decoder);
 
-        // Copy the decoded data to main audio buffer
-        pImpl->audioData = pImpl->flacBuffer;
+        // Copy decoded data to main audio buffer with bounds checking
+        if (!pImpl->flacBuffer.empty()) {
+            try {
+                pImpl->audioData.resize(pImpl->flacBuffer.size());
+                std::copy(pImpl->flacBuffer.begin(), pImpl->flacBuffer.end(), pImpl->audioData.begin());
+            } catch (const std::exception& e) {
+                std::cout << "Error: Could not copy decoded audio data: " << e.what() << "\n";
+                return false;
+            }
+        }
 
         // Set up wave format for the decoded audio
         pImpl->waveFormat.wFormatTag = WAVE_FORMAT_PCM;
@@ -727,16 +740,28 @@ bool AudioEngine::SetTargetBitrate(int targetBitrate) {
 
     // Use GPU to convert the audio data to the target bitrate
     if (pImpl->gpuProcessor) {
-        // Allocate buffer for converted audio
-        std::vector<float> inputAudio(pImpl->audioData.size() / sizeof(char) * sizeof(float));  // Convert size appropriately
-        std::vector<float> outputAudio(inputAudio.size());  // Same size initially
+        // Calculate appropriate buffer size - each char in audioData becomes a float
+        size_t audioDataSize = pImpl->audioData.size();
+        size_t floatBufferSize = audioDataSize;  // Each char maps to a float value
 
-        // Convert the char audio data to float for processing
-        // First convert char values to normalized floating point values (-1.0 to 1.0)
-        for (size_t i = 0; i < pImpl->audioData.size(); i++) {
+        // Safely allocate buffer with proper bounds
+        std::vector<float> inputAudio;
+        std::vector<float> outputAudio;
+
+        try {
+            inputAudio.resize(floatBufferSize);
+            outputAudio.resize(floatBufferSize);  // Same size initially
+        } catch (const std::bad_alloc&) {
+            std::cout << "Error: Could not allocate memory for audio buffers\n";
+            return false;
+        }
+
+        // Safely convert the char audio data to float for processing
+        // Use boundary-checked loop
+        for (size_t i = 0; i < pImpl->audioData.size() && i < inputAudio.size(); i++) {
             // Convert char to float (normalize to [-1, 1])
             char sample = pImpl->audioData[i];
-            inputAudio[i] = static_cast<float>(sample) / 127.0f;  // Assuming 8-bit for simplicity
+            inputAudio[i] = static_cast<float>(sample) / 127.0f;  // Normalize to [-1, 1]
         }
 
         // Use GPU processor for bitrate conversion
@@ -749,13 +774,23 @@ bool AudioEngine::SetTargetBitrate(int targetBitrate) {
         );
 
         if (success) {
-            // Convert float output back to char buffer
-            pImpl->audioData.resize(outputAudio.size());
-            for (size_t i = 0; i < outputAudio.size(); i++) {
-                float sample = outputAudio[i];
-                // Clamp value to valid range and convert back to char
-                sample = std::max(-1.0f, std::min(1.0f, sample));
-                pImpl->audioData[i] = static_cast<char>(sample * 127);
+            // Safely convert float output back to char buffer with boundary checks
+            size_t outputSize = std::min(outputAudio.size(), (size_t)pImpl->audioData.capacity());
+            if (outputSize > 0) {
+                try {
+                    pImpl->audioData.reserve(outputSize);  // Reserve space to prevent reallocation issues
+                    pImpl->audioData.resize(outputSize);
+                } catch (const std::exception&) {
+                    std::cout << "Error: Could not resize audio data buffer\n";
+                    return false;
+                }
+
+                for (size_t i = 0; i < outputAudio.size() && i < pImpl->audioData.size(); i++) {
+                    float sample = outputAudio[i];
+                    // Clamp value to valid range and convert back to char
+                    float clampedSample = std::max(-1.0f, std::min(1.0f, sample));
+                    pImpl->audioData[i] = static_cast<char>(clampedSample * 127);
+                }
             }
 
             std::cout << "Audio bitrate converted from " << estimatedInputBitrate

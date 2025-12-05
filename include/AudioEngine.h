@@ -2,7 +2,10 @@
 #define AUDIO_ENGINE_H
 
 #include <string>
-#include <memory>  // Added for std::unique_ptr
+#include <memory>   // Added for std::unique_ptr
+#include <vector>   // Added for std::vector
+#include <mutex>    // Added for std::mutex and std::atomic
+#include <atomic>   // Added for std::atomic
 
 // Forward declarations for interfaces
 class IGPUProcessor;
