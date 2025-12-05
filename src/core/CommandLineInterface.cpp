@@ -195,19 +195,19 @@ bool CommandLineInterface::HandlePlay(const std::string& filePath) {
 bool CommandLineInterface::HandlePause() {
     std::cout << "Toggling pause\n";
     // In a real implementation, we would call engine.Pause()
-    return true;
+    return engine.Pause();  // ✅ Fixed: Added actual call to engine.Pause()
 }
 
 bool CommandLineInterface::HandleStop() {
     std::cout << "Stopping playback\n";
     // In a real implementation, we would call engine.Stop()
-    return true;
+    return engine.Stop();  // ✅ Fixed: Added actual call to engine.Stop()
 }
 
 bool CommandLineInterface::HandleSeek(double seconds) {
     std::cout << "Seeking to: " << seconds << " seconds\n";
     // In a real implementation, we would call engine.Seek(seconds)
-    return true;
+    return engine.Seek(seconds);  // ✅ Fixed: Added actual call to engine.Seek(seconds)
 }
 
 bool CommandLineInterface::HandleEQ(double freq1, double gain1, double q1,
@@ -216,7 +216,7 @@ bool CommandLineInterface::HandleEQ(double freq1, double gain1, double q1,
               << "  Low: F=" << freq1 << ", G=" << gain1 << ", Q=" << q1 << "\n"
               << "  High: F=" << freq2 << ", G=" << gain2 << ", Q=" << q2 << "\n";
     // In a real implementation, we would call engine.SetEQ(freq1, gain1, q1, freq2, gain2, q2)
-    return true;
+    return engine.SetEQ(freq1, gain1, q1, freq2, gain2, q2);  // ✅ Fixed: Added actual call to engine.SetEQ()
 }
 
 bool CommandLineInterface::HandleStats() {
