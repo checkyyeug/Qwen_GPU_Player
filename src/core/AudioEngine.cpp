@@ -49,6 +49,11 @@ public:
     size_t playbackPosition = 0; // Position in audio data buffer (in bytes)
     double playbackTime = 0.0;   // Playback time in seconds
 
+    // Saved playback position for state persistence
+    size_t savedPlaybackPosition = 0;
+    double savedPlaybackTime = 0.0;
+    bool hasSavedPosition = false;
+
     // Thread for audio playback
     std::thread playbackThread;
 
@@ -603,22 +608,30 @@ bool AudioEngine::Stop() {
         return false;
     }
 
-    // Determine current state for feedback
-    bool wasPlaying = pImpl->isPlaying.load();
-    bool wasPaused = pImpl->isPaused.load();
+    // Check current state before acquiring lock
+    bool wasPlaying = pImpl->isPlaying.load();  // Use atomic access
+    bool wasPaused = pImpl->isPaused.load();    // Use atomic access
+
+    // Save the current playback position for potential resumption later
+    if (wasPlaying || wasPaused) {
+        pImpl->savedPlaybackPosition = pImpl->playbackPosition;
+        pImpl->savedPlaybackTime = pImpl->playbackTime;
+        pImpl->hasSavedPosition = true;
+    }
 
     // Signal the playback thread to stop
     pImpl->shouldStop = true;
 
-    // If there's an active playback thread, join it properly
+    // If there's an active playback thread, join it
     if (pImpl->playbackThread.joinable()) {
+        // Wait for the thread to finish if it's joinable
         pImpl->playbackThread.join();
     }
 
 #ifdef _WIN32
     // Stop the audio output device if it's open
     if (pImpl->hWaveOut != nullptr) {
-        waveOutReset(pImpl->hWaveOut);  // Immediately stop all pending playback
+        waveOutReset(pImpl->hWaveOut);  // Immediately stop any playback
         waveOutUnprepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
         waveOutClose(pImpl->hWaveOut);
         pImpl->hWaveOut = nullptr;
@@ -628,8 +641,9 @@ bool AudioEngine::Stop() {
     // Use atomic operations to reset states
     pImpl->isPlaying.store(false);
     pImpl->isPaused.store(false);
-    pImpl->playbackPosition = 0;
-    pImpl->playbackTime = 0.0;
+    // Keep playback position for potential restart
+    // pImpl->playbackPosition = 0;  // Don't reset position - keep for restart
+    // pImpl->playbackTime = 0.0;    // Don't reset time - keep for restart
 
     if (wasPlaying || wasPaused) {
         std::cout << "Playback stopped\n";
