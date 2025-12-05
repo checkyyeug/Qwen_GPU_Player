@@ -68,20 +68,15 @@ int main(int argc, char* argv[]) {
         if (player.LoadFile(filePath)) {
             player.Play();
 
-            // Wait for playback to complete before exiting
-            std::cout << "Playback started. Waiting for completion...\n";
+            // For command-line usage, we should return control to user immediately
+            // but the playback continues in background
+            std::cout << "Playback started in background. Switching to interactive mode.\n";
 
-            // Simple approach: wait a few seconds to allow playback to run
-            // In a real implementation, we would properly wait for playback completion
-            std::this_thread::sleep_for(std::chrono::seconds(10));  // Wait 10 seconds to allow playback
-
-            std::cout << "Playback completed\n";
+            // Don't wait - allow playback to continue in background while user can enter commands
+            // The playback thread will continue running in the background
         } else {
             std::cout << "Failed to load file\n";
         }
-
-        std::cout << "Exiting GPU Music Player...\n";
-        return 0;
     }
 
     // Interactive mode - process commands from user input
