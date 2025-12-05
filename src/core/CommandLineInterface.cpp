@@ -35,9 +35,18 @@ bool CommandLineInterface::ExecuteCommand(const std::vector<std::string>& args) 
     // Handle different commands
     if (command == "play") {
         if (args.size() < 2) {
-            std::cout << "Usage: play <file_path>\n";
-            return false;
+            // If no arguments provided, check if a file was loaded previously
+            if (engine.IsFileLoaded()) {
+                // Play the previously loaded file
+                return engine.Play();
+            } else {
+                std::cout << "Error: No file loaded to play\n";
+                std::cout << "Usage: play <file_path>\n";
+                std::cout << "Or first use 'load <file_path>' to load a file, then 'play' to play it\n";
+                return false;
+            }
         }
+        // If file path is provided, load and play it
         return HandlePlay(args[1]);
     }
     else if (command == "load") {

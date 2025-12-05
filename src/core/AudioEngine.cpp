@@ -958,3 +958,12 @@ bool AudioEngine::SaveFile(const std::string& filePath) {
               << " (" << pImpl->audioData.size() << " bytes)\n";
     return true;
 }
+
+bool AudioEngine::IsFileLoaded() const {
+    if (!pImpl->initialized) {
+        return false;
+    }
+
+    // Check if we have a file loaded and audio data available
+    return !pImpl->currentFile.empty() && pImpl->audioLoaded && !pImpl->audioData.empty();
+}

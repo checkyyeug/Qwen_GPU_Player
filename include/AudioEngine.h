@@ -90,6 +90,12 @@ public:
     std::string GetStats();
 
     /**
+     * @brief Check if an audio file is currently loaded
+     * @return true if a file is loaded and ready to play, false otherwise
+     */
+    bool IsFileLoaded() const;
+
+    /**
      * @brief Set processing parameters for audio engine
      * @param params Processing parameters to apply
      */
