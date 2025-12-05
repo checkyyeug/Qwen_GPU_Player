@@ -556,6 +556,9 @@ bool AudioEngine::Pause() {
         return false;
     }
 
+    // Use mutex to protect shared state manipulation
+    std::lock_guard<std::mutex> lock(pImpl->audioEngineMutex);
+
     if (pImpl->isPlaying) {
         if (pImpl->isPaused) {
             // Resume playback
@@ -564,9 +567,11 @@ bool AudioEngine::Pause() {
 
 #ifdef _WIN32
             // Resume the audio output if it was paused
-            MMRESULT result = waveOutRestart(pImpl->hWaveOut);
-            if (result != MMSYSERR_NOERROR) {
-                std::cout << "Warning: Could not resume audio output\n";
+            if (pImpl->hWaveOut) {
+                MMRESULT result = waveOutRestart(pImpl->hWaveOut);
+                if (result != MMSYSERR_NOERROR) {
+                    std::cout << "Warning: Could not resume audio output\n";
+                }
             }
 #endif
         } else {
@@ -576,9 +581,11 @@ bool AudioEngine::Pause() {
 
 #ifdef _WIN32
             // Pause the audio output device
-            MMRESULT result = waveOutPause(pImpl->hWaveOut);
-            if (result != MMSYSERR_NOERROR) {
-                std::cout << "Warning: Could not pause audio output\n";
+            if (pImpl->hWaveOut) {
+                MMRESULT result = waveOutPause(pImpl->hWaveOut);
+                if (result != MMSYSERR_NOERROR) {
+                    std::cout << "Warning: Could not pause audio output\n";
+                }
             }
 #endif
         }
@@ -593,7 +600,11 @@ bool AudioEngine::Stop() {
         return false;
     }
 
+    // Use mutex to protect shared state manipulation
+    std::lock_guard<std::mutex> lock(pImpl->audioEngineMutex);
+
     bool wasPlaying = pImpl->isPlaying;
+    bool wasPaused = pImpl->isPaused;
 
     // Signal the playback thread to stop
     pImpl->shouldStop = true;
@@ -617,8 +628,10 @@ bool AudioEngine::Stop() {
     pImpl->isPlaying = false;
     pImpl->isPaused = false;
     pImpl->currentFile.clear();
+    pImpl->playbackPosition = 0;
+    pImpl->playbackTime = 0.0;
 
-    if (wasPlaying) {
+    if (wasPlaying || wasPaused) {
         std::cout << "Playback stopped\n";
     } else {
         std::cout << "Playback reset\n";
@@ -791,28 +804,67 @@ bool AudioEngine::SetTargetBitrate(int targetBitrate) {
 
     // Use GPU to convert the audio data to the target bitrate
     if (pImpl->gpuProcessor) {
-        // Calculate appropriate buffer size - each char in audioData becomes a float
-        size_t audioDataSize = pImpl->audioData.size();
-        size_t floatBufferSize = audioDataSize;  // Each char maps to a float value
+        // Calculate appropriate buffer size based on the actual audio format
+        // Check if WAV format is PCM 16-bit (most common case)
+        size_t bytesPerSample = (pImpl->waveFormat.wBitsPerSample > 0) ?
+                                (pImpl->waveFormat.wBitsPerSample / 8) : 2;
+        size_t numSamples = (bytesPerSample > 0) ? (pImpl->audioData.size() / bytesPerSample) : 0;
+
+        if (numSamples == 0) {
+            std::cout << "Error: Invalid audio data format\n";
+            return false;
+        }
 
         // Safely allocate buffer with proper bounds
         std::vector<float> inputAudio;
         std::vector<float> outputAudio;
 
         try {
-            inputAudio.resize(floatBufferSize);
-            outputAudio.resize(floatBufferSize);  // Same size initially
+            inputAudio.resize(numSamples);
+            outputAudio.resize(numSamples);  // Same number of samples initially
         } catch (const std::bad_alloc&) {
             std::cout << "Error: Could not allocate memory for audio buffers\n";
             return false;
         }
 
-        // Safely convert the char audio data to float for processing
-        // Use boundary-checked loop
-        for (size_t i = 0; i < pImpl->audioData.size() && i < inputAudio.size(); i++) {
-            // Convert char to float (normalize to [-1, 1])
-            char sample = pImpl->audioData[i];
-            inputAudio[i] = static_cast<float>(sample) / 127.0f;  // Normalize to [-1, 1]
+        // Safely convert the audio data to float for processing based on sample format
+        if (pImpl->waveFormat.wBitsPerSample == 16) {
+            // Handle 16-bit PCM audio data
+            short* audioDataPtr = reinterpret_cast<short*>(pImpl->audioData.data());
+            size_t samplesToConvert = std::min(numSamples, inputAudio.size());
+
+            for (size_t i = 0; i < samplesToConvert; i++) {
+                // Convert 16-bit signed integer to float (range [-1, 1])
+                inputAudio[i] = static_cast<float>(audioDataPtr[i]) / 32768.0f;  // For 16-bit audio
+            }
+        } else if (pImpl->waveFormat.wBitsPerSample == 8) {
+            // Handle 8-bit PCM audio data
+            unsigned char* audioDataPtr = reinterpret_cast<unsigned char*>(pImpl->audioData.data());
+            size_t samplesToConvert = std::min(pImpl->audioData.size(), inputAudio.size());
+
+            for (size_t i = 0; i < samplesToConvert; i++) {
+                // Convert 8-bit unsigned to float (range [-1, 1])
+                inputAudio[i] = static_cast<float>(static_cast<signed char>(audioDataPtr[i] - 128)) / 128.0f;
+            }
+        } else if (pImpl->waveFormat.wBitsPerSample == 24) {
+            // Handle 24-bit PCM audio data
+            // This is more complex - would need to properly handle 3-byte samples
+            std::cout << "Warning: 24-bit audio format handling not fully implemented\n";
+            // For now, treat as 8-bit per byte
+            size_t samplesToConvert = std::min(pImpl->audioData.size(), inputAudio.size());
+
+            for (size_t i = 0; i < samplesToConvert; i++) {
+                char sample = pImpl->audioData[i];
+                inputAudio[i] = static_cast<float>(sample) / 127.0f;  // Fallback normalization
+            }
+        } else {
+            // Default: treat as 16-bit
+            short* audioDataPtr = reinterpret_cast<short*>(pImpl->audioData.data());
+            size_t samplesToConvert = std::min(numSamples, inputAudio.size());
+
+            for (size_t i = 0; i < samplesToConvert; i++) {
+                inputAudio[i] = static_cast<float>(audioDataPtr[i]) / 32768.0f;
+            }
         }
 
         // Use GPU processor for bitrate conversion
@@ -825,22 +877,23 @@ bool AudioEngine::SetTargetBitrate(int targetBitrate) {
         );
 
         if (success) {
-            // Safely convert float output back to char buffer with boundary checks
-            size_t outputSize = std::min(outputAudio.size(), (size_t)pImpl->audioData.capacity());
-            if (outputSize > 0) {
+            // Safely convert float output back to audio data with proper format
+            size_t outputSize = outputAudio.size() * bytesPerSample;
+            if (pImpl->waveFormat.wBitsPerSample == 16) {
+                // Convert back to 16-bit PCM
                 try {
-                    pImpl->audioData.reserve(outputSize);  // Reserve space to prevent reallocation issues
                     pImpl->audioData.resize(outputSize);
+                    short* audioDataPtr = reinterpret_cast<short*>(pImpl->audioData.data());
+
+                    for (size_t i = 0; i < outputAudio.size() && i < (pImpl->audioData.size() / sizeof(short)); i++) {
+                        float sample = outputAudio[i];
+                        // Clamp value to valid range and convert back to 16-bit
+                        sample = std::max(-1.0f, std::min(1.0f, sample));
+                        audioDataPtr[i] = static_cast<short>(sample * 32767.0f);
+                    }
                 } catch (const std::exception&) {
                     std::cout << "Error: Could not resize audio data buffer\n";
                     return false;
-                }
-
-                for (size_t i = 0; i < outputAudio.size() && i < pImpl->audioData.size(); i++) {
-                    float sample = outputAudio[i];
-                    // Clamp value to valid range and convert back to char
-                    float clampedSample = std::max(-1.0f, std::min(1.0f, sample));
-                    pImpl->audioData[i] = static_cast<char>(clampedSample * 127);
                 }
             }
 
@@ -879,11 +932,11 @@ bool AudioEngine::SaveFile(const std::string& filePath) {
     // RIFF header
     outputFile.write("RIFF", 4);
 
-    // File size placeholder (will update later)
-    int fileSize = 36 + pImpl->audioData.size(); // 36 = header size, size of data
-    outputFile.write(reinterpret_cast<const char*>(&fileSize), 4);
+    // Calculate data size
+    int dataSize = pImpl->audioData.size();
+    int totalFileSize = 36 + dataSize; // 36 = header size, dataSize = our data
 
-    // Format
+    outputFile.write(reinterpret_cast<const char*>(&totalFileSize), 4);
     outputFile.write("WAVE", 4);
 
     // Format subchunk
@@ -904,12 +957,10 @@ bool AudioEngine::SaveFile(const std::string& filePath) {
     outputFile.write(reinterpret_cast<const char*>(&pImpl->waveFormat.nSamplesPerSec), 4);
 
     // Byte rate (sample rate * channels * bits per sample / 8)
-    int byteRate = pImpl->waveFormat.nAvgBytesPerSec;
-    outputFile.write(reinterpret_cast<const char*>(&byteRate), 4);
+    outputFile.write(reinterpret_cast<const char*>(&pImpl->waveFormat.nAvgBytesPerSec), 4);
 
     // Block align (channels * bits per sample / 8)
-    short blockAlign = pImpl->waveFormat.nBlockAlign;
-    outputFile.write(reinterpret_cast<const char*>(&blockAlign), 2);
+    outputFile.write(reinterpret_cast<const char*>(&pImpl->waveFormat.nBlockAlign), 2);
 
     // Bits per sample
     short bitsPerSample = pImpl->waveFormat.wBitsPerSample;
@@ -919,7 +970,6 @@ bool AudioEngine::SaveFile(const std::string& filePath) {
     outputFile.write("data", 4);
 
     // Data size
-    int dataSize = pImpl->audioData.size();
     outputFile.write(reinterpret_cast<const char*>(&dataSize), 4);
 
     // Actual audio data

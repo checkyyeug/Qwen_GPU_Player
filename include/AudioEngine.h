@@ -7,10 +7,13 @@
 #include <mutex>    // Added for std::mutex and std::atomic
 #include <atomic>   // Added for std::atomic
 
-// Forward declarations for interfaces
+// Forward declaration for GPU interface
 class IGPUProcessor;
-class IAudioDecoder;
-class IAudioDevice;
+
+// Note: These interfaces are placeholders for the original design
+// The actual implementation uses only the IGPUProcessor interface
+// class IAudioDecoder;
+// class IAudioDevice;
 
 /**
  * @brief Main audio engine interface that coordinates all components
