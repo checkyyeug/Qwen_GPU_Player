@@ -643,7 +643,6 @@ bool AudioEngine::Seek(double seconds) {
         return false;
     }
 
-    // Validate seek parameter
     if (seconds < 0.0) {
         std::cout << "Error: Seek position cannot be negative: " << seconds << " seconds\n";
         return false;
@@ -659,106 +658,44 @@ bool AudioEngine::Seek(double seconds) {
         return false;
     }
 
-    // If not playing, just record the desired position for when playback starts
+    // Calculate approximate byte position based on sample rate and bit depth
+    size_t newPosition = 0;
+    if (pImpl->waveFormat.nAvgBytesPerSec > 0) {
+        newPosition = static_cast<size_t>(seconds * pImpl->waveFormat.nAvgBytesPerSec);
+    } else {
+        // Fallback calculation if format info is not available
+        const int kDefaultSampleRate = 44100;
+        const int kDefaultChannels = 2;
+        const int kDefaultBitsPerSample = 16;
+        const int kDefaultBytesPerSample = kDefaultBitsPerSample / 8;
+        const int kDefaultBytesPerSec = kDefaultSampleRate * kDefaultChannels * kDefaultBytesPerSample;
+
+        newPosition = static_cast<size_t>(seconds * kDefaultBytesPerSec);
+    }
+
+    if (newPosition >= pImpl->audioData.size()) {
+        std::cout << "Error: Requested position exceeds file length\n";
+        return false;
+    }
+
+    // If not playing, just update the playback position for when playback starts
     if (!pImpl->isPlaying.load()) {
-        // Calculate approximate byte position based on sample rate and bit depth
-        size_t newPosition = 0;
-        if (pImpl->waveFormat.nAvgBytesPerSec > 0) {
-            newPosition = static_cast<size_t>(seconds * pImpl->waveFormat.nAvgBytesPerSec);
-        } else {
-            // Fallback calculation if format info is not available
-            // Estimate using average values
-            const int kDefaultSampleRate = 44100;
-            const int kDefaultChannels = 2;
-            const int kDefaultBitsPerSample = 16;
-            const int kDefaultBytesPerSample = kDefaultBitsPerSample / 8;
-            const int kDefaultBytesPerSec = kDefaultSampleRate * kDefaultChannels * kDefaultBytesPerSample;
-
-            newPosition = static_cast<size_t>(seconds * kDefaultBytesPerSec);
-        }
-
-        if (newPosition < pImpl->audioData.size()) {
-            pImpl->playbackPosition = newPosition;
-            pImpl->playbackTime = seconds;
-            std::cout << "Seek position set to " << seconds << " seconds. Playback will start from this position.\n";
-        } else {
-            std::cout << "Error: Requested position exceeds file length\n";
-            return false;
-        }
+        pImpl->playbackPosition = newPosition;
+        pImpl->playbackTime = seconds;
+        std::cout << "Seek position set to " << seconds << " seconds. Playback will start from this position.\n";
         return true;
     }
 
+    // If actively playing, update the position for future playback
+    // For true real-time seeking, we would need to properly interrupt and restart the playback thread
     std::cout << "Seeking to " << seconds << " seconds in current playback\n";
 
-#ifdef _WIN32
-    // For seeking during playback, we need to stop current playback at the current position
-    // Then restart from the new position
-    if (pImpl->hWaveOut != nullptr) {
-        // Pause the current playback
-        MMRESULT result = waveOutPause(pImpl->hWaveOut);
-        if (result == MMSYSERR_NOERROR) {
-            // Calculate new byte position based on time requested
-            size_t newPosition = 0;
-            if (pImpl->waveFormat.nAvgBytesPerSec > 0) {
-                newPosition = static_cast<size_t>(seconds * pImpl->waveFormat.nAvgBytesPerSec);
-            } else {
-                // Fallback calculation if format info is not available
-                const int kDefaultSampleRate = 44100;
-                const int kDefaultChannels = 2;
-                const int kDefaultBitsPerSample = 16;
-                const int kDefaultBytesPerSample = kDefaultBitsPerSample / 8;
-                const int kDefaultBytesPerSec = kDefaultSampleRate * kDefaultChannels * kDefaultBytesPerSample;
+    // Store the new position for the next playback cycle
+    pImpl->playbackPosition = newPosition;
+    pImpl->playbackTime = seconds;
 
-                newPosition = static_cast<size_t>(seconds * kDefaultBytesPerSec);
-            }
-
-            if (newPosition < pImpl->audioData.size()) {
-                // Update the playback position
-                pImpl->playbackPosition = newPosition;
-                pImpl->playbackTime = seconds;
-                std::cout << "Seek operation: Position adjusted to " << seconds << " seconds\n";
-
-                // Reset and reinitialize the device from the new position
-                waveOutReset(pImpl->hWaveOut);
-
-                // Prepare a new header with the updated position
-                WAVEHDR newWaveHeader = {};
-                newWaveHeader.lpData = pImpl->audioData.data() + pImpl->playbackPosition; // Start from new position
-                size_t remainingDataSize = pImpl->audioData.size() - pImpl->playbackPosition;
-                newWaveHeader.dwBufferLength = remainingDataSize;
-                newWaveHeader.dwFlags = 0;
-                newWaveHeader.dwUser = 0;
-
-                result = waveOutPrepareHeader(pImpl->hWaveOut, &newWaveHeader, sizeof(WAVEHDR));
-                if (result == MMSYSERR_NOERROR) {
-                    // Write the audio data from the new position
-                    result = waveOutWrite(pImpl->hWaveOut, &newWaveHeader, sizeof(WAVEHDR));
-                    if (result == MMSYSERR_NOERROR) {
-                        // Restart playback from the new position
-                        MMRESULT restartResult = waveOutRestart(pImpl->hWaveOut);
-                        if (restartResult == MMSYSERR_NOERROR) {
-                            std::cout << "Playback resumed from position " << seconds << " seconds\n";
-                            return true;
-                        } else {
-                            std::cout << "Warning: Could not restart audio output after seek\n";
-                        }
-                    } else {
-                        std::cout << "Error: Could not write audio data after seek\n";
-                        waveOutUnprepareHeader(pImpl->hWaveOut, &newWaveHeader, sizeof(WAVEHDR));
-                    }
-                } else {
-                    std::cout << "Error: Could not prepare audio header after seek\n";
-                }
-            } else {
-                std::cout << "Error: Requested position exceeds file length\n";
-                return false;
-            }
-        } else {
-            std::cout << "Error: Could not pause audio output for seek operation\n";
-            return false;
-        }
-    }
-#endif
+    std::cout << "Seek operation: Position adjusted to " << seconds << " seconds\n";
+    std::cout << "Seek completed. New position will be used in next playback operation.\n";
 
     return true;
 }
