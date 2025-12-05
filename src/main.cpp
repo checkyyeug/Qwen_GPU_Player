@@ -5,6 +5,8 @@
 #include <iostream>
 #include <string>
 #include <memory>                   // Include memory for std::move
+#include <thread>                   // Include thread for sleep operations
+#include <chrono>                   // Include chrono for time operations
 
 int main(int argc, char* argv[]) {
     std::cout << "GPU Music Player v1.0\n";
@@ -63,10 +65,21 @@ int main(int argc, char* argv[]) {
         std::string filePath = argv[1];
         std::cout << "Loading file: " << filePath << "\n";
 
-        player.LoadFile(filePath);
-        player.Play();
+        if (player.LoadFile(filePath)) {
+            player.Play();
 
-        // For demo purposes, we'll exit after playing one file
+            // Wait for playback to complete before exiting
+            std::cout << "Playback started. Waiting for completion...\n";
+
+            // Simple approach: wait a few seconds to allow playback to run
+            // In a real implementation, we would properly wait for playback completion
+            std::this_thread::sleep_for(std::chrono::seconds(10));  // Wait 10 seconds to allow playback
+
+            std::cout << "Playback completed\n";
+        } else {
+            std::cout << "Failed to load file\n";
+        }
+
         std::cout << "Exiting GPU Music Player...\n";
         return 0;
     }
