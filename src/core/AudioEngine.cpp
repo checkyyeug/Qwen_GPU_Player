@@ -29,11 +29,14 @@ class AudioEngine::Impl {
 public:
     Impl() = default;
 
-    // Placeholder for actual implementation
+    // Core initialization state
     bool initialized = false;
     std::string currentFile;
+
+    // Audio state with atomic variables for thread safety
     std::atomic<bool> isPlaying{false};
     std::atomic<bool> isPaused{false};
+    std::atomic<bool> shouldStop{false};
 
     // Audio data and parameters
     std::vector<char> audioData;
@@ -48,7 +51,6 @@ public:
 
     // Thread for audio playback
     std::thread playbackThread;
-    std::atomic<bool> shouldStop{false};
 
     // GPU processor
     std::unique_ptr<IGPUProcessor> gpuProcessor;
@@ -59,10 +61,10 @@ public:
 #ifdef ENABLE_FLAC
     // FLAC decoding related data
     std::vector<char> flacBuffer;
-    size_t flacSampleRate = 0;
-    unsigned int flacChannels = 0;
-    unsigned int flacBitsPerSample = 0;
-    FLAC__uint64 flacTotalSamples = 0;
+    std::atomic<size_t> flacSampleRate{0};
+    std::atomic<unsigned int> flacChannels{0};
+    std::atomic<unsigned int> flacBitsPerSample{0};
+    std::atomic<FLAC__uint64> flacTotalSamples{0};
     bool isFlacFile = false;
 #endif
 };
@@ -517,39 +519,39 @@ bool AudioEngine::Play() {
         }
 
         // Cleanup - only if not stopped externally
-        if (!pImpl->shouldStop) {
+        if (!pImpl->shouldStop.load()) {
             waveOutUnprepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
             waveOutClose(pImpl->hWaveOut);
             pImpl->hWaveOut = nullptr;
         }
 
-        if (!pImpl->shouldStop) {
+        if (!pImpl->shouldStop.load()) {
             std::cout << "Playback finished\n";
         }
 #else
         // For non-Windows platforms, simulate playback with sleep
         std::cout << "Playing audio: Simulating playback for 5 seconds...\n";
-        for (int i = 0; i < 50 && !pImpl->shouldStop; ++i) {  // 50 iterations with 100ms each = 5 sec
-            if (!pImpl->isPaused) {
+        for (int i = 0; i < 50 && !pImpl->shouldStop.load(); ++i) {  // 50 iterations with 100ms each = 5 sec
+            if (!pImpl->isPaused.load()) {
                 // Only advance time if not paused
                 pImpl->playbackTime += 0.1;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 
-        if (pImpl->shouldStop) {
+        if (pImpl->shouldStop.load()) {
             std::cout << "Playback stopped by user request\n";
         } else {
             std::cout << "Playback finished\n";
         }
 #endif
-        // Reset playing state when done
-        pImpl->isPlaying = false;
-        pImpl->isPaused = false;
+        // Reset playing state when done with atomic operations
+        pImpl->isPlaying.store(false);
+        pImpl->isPaused.store(false);
         pImpl->playbackTime = 0.0;  // Reset playback time when done
     });
 
-    pImpl->isPlaying = true;
+    pImpl->isPlaying.store(true);  // Use atomic operation
     std::cout << "Starting playback of " << pImpl->currentFile << " (background)\n";
     return true;
 }
@@ -559,23 +561,14 @@ bool AudioEngine::Pause() {
         return false;
     }
 
+    // Use mutex to protect state changes
+    std::lock_guard<std::mutex> lock(pImpl->audioEngineMutex);
+
     if (pImpl->isPlaying.load()) {
-        bool pausedValue = pImpl->isPaused.load();  // Atomic read
-        pImpl->isPaused.store(!pausedValue);        // Toggle with atomic write
+        bool currentPaused = pImpl->isPaused.load();  // Atomic read
+        pImpl->isPaused.store(!currentPaused);        // Toggle with atomic write
 
-        if (!pausedValue) {
-            std::cout << "Playback paused\n";
-
-#ifdef _WIN32
-            // Actually pause the audio output device if we have it
-            if (pImpl->hWaveOut) {
-                MMRESULT result = waveOutPause(pImpl->hWaveOut);
-                if (result != MMSYSERR_NOERROR) {
-                    std::cout << "Warning: Could not pause audio output\n";
-                }
-#endif
-            }
-        } else {
+        if (currentPaused) {
             std::cout << "Playback resumed\n";
 
 #ifdef _WIN32
@@ -584,6 +577,18 @@ bool AudioEngine::Pause() {
                 MMRESULT result = waveOutRestart(pImpl->hWaveOut);
                 if (result != MMSYSERR_NOERROR) {
                     std::cout << "Warning: Could not resume audio output\n";
+                }
+#endif
+            }
+        } else {
+            std::cout << "Playback paused\n";
+
+#ifdef _WIN32
+            // Actually pause the audio output device if we have it
+            if (pImpl->hWaveOut) {
+                MMRESULT result = waveOutPause(pImpl->hWaveOut);
+                if (result != MMSYSERR_NOERROR) {
+                    std::cout << "Warning: Could not pause audio output\n";
                 }
 #endif
             }
