@@ -599,23 +599,22 @@ bool AudioEngine::Stop() {
         return false;
     }
 
-    // Check current state before acquiring lock
-    bool wasPlaying = pImpl->isPlaying.load();  // Use atomic access
-    bool wasPaused = pImpl->isPaused.load();    // Use atomic access
+    // Determine current state for feedback
+    bool wasPlaying = pImpl->isPlaying.load();
+    bool wasPaused = pImpl->isPaused.load();
 
     // Signal the playback thread to stop
     pImpl->shouldStop = true;
 
-    // If there's an active playback thread, join it
+    // If there's an active playback thread, join it properly
     if (pImpl->playbackThread.joinable()) {
-        // Wait a short moment for the thread to process the stop signal
         pImpl->playbackThread.join();
     }
 
 #ifdef _WIN32
     // Stop the audio output device if it's open
     if (pImpl->hWaveOut != nullptr) {
-        waveOutReset(pImpl->hWaveOut);  // Immediately stop any playback
+        waveOutReset(pImpl->hWaveOut);  // Immediately stop all pending playback
         waveOutUnprepareHeader(pImpl->hWaveOut, &pImpl->waveHeader, sizeof(WAVEHDR));
         waveOutClose(pImpl->hWaveOut);
         pImpl->hWaveOut = nullptr;
@@ -627,12 +626,13 @@ bool AudioEngine::Stop() {
     pImpl->isPaused.store(false);
     pImpl->playbackPosition = 0;
     pImpl->playbackTime = 0.0;
-    pImpl->currentFile.clear();
 
     if (wasPlaying || wasPaused) {
         std::cout << "Playback stopped\n";
-    } else {
+    } else if (!pImpl->currentFile.empty()) {
         std::cout << "Playback reset\n";
+    } else {
+        std::cout << "Playback engine reset\n";
     }
 
     return true;
@@ -965,6 +965,42 @@ bool AudioEngine::SaveFile(const std::string& filePath) {
     std::cout << "Saved processed audio to file: " << filePath
               << " (" << pImpl->audioData.size() << " bytes)\n";
     return true;
+}
+
+AudioEngine::PlaybackState AudioEngine::GetPlaybackState() const {
+    if (!pImpl->initialized) {
+        return PlaybackState::Stopped;
+    }
+
+    if (pImpl->isPlaying.load()) {
+        if (pImpl->isPaused.load()) {
+            return PlaybackState::Paused;
+        } else {
+            return PlaybackState::Playing;
+        }
+    } else {
+        return PlaybackState::Stopped;
+    }
+}
+
+double AudioEngine::GetCurrentPosition() const {
+    if (!pImpl->initialized) {
+        return 0.0;
+    }
+
+    // Calculate position based on format and current playback position
+    if (pImpl->waveFormat.nAvgBytesPerSec > 0) {
+        return static_cast<double>(pImpl->playbackPosition) / pImpl->waveFormat.nAvgBytesPerSec;
+    } else {
+        // Fallback calculation if format info is not available
+        const int kDefaultSampleRate = 44100;
+        const int kDefaultChannels = 2;
+        const int kDefaultBitsPerSample = 16;
+        const int kDefaultBytesPerSample = kDefaultBitsPerSample / 8;
+        const int kDefaultBytesPerSec = kDefaultSampleRate * kDefaultChannels * kDefaultBytesPerSample;
+
+        return static_cast<double>(pImpl->playbackPosition) / kDefaultBytesPerSec;
+    }
 }
 
 bool AudioEngine::IsFileLoaded() const {

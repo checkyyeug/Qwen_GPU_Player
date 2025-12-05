@@ -127,6 +127,28 @@ public:
      */
     bool SaveFile(const std::string& filePath);
 
+    /**
+     * @brief Get the current playback status
+     * @return Current playback state (Stopped, Paused, Playing)
+     */
+    enum class PlaybackState {
+        Stopped,
+        Playing,
+        Paused
+    };
+
+    /**
+     * @brief Get the current playback state
+     * @return Current playback state
+     */
+    PlaybackState GetPlaybackState() const;
+
+    /**
+     * @brief Get the current playback position in seconds
+     * @return Current playback time in seconds
+     */
+    double GetCurrentPosition() const;
+
 private:
     // Private implementation details
     class Impl;
