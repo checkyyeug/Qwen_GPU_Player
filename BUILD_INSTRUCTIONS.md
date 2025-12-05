@@ -31,6 +31,17 @@ I've successfully implemented and integrated all core features in the GPU Music 
    - Added format validation for supported audio formats
    - Enhanced error handling for missing or unsupported files
 
+6. **Background Playback & Thread Safety**:
+   - Implemented non-blocking, background audio playback
+   - Added proper thread synchronization with mutex and atomic variables
+   - Fixed thread safety issues that were causing problems
+   - Enabled simultaneous command input during playback
+
+7. **GPU-based Bitrate Conversion**:
+   - Enhanced audio engine with GPU-accelerated bitrate conversion capability
+   - Added proper audio pipeline integration with GPU processor
+   - Implemented memory-safe conversion with boundary checks and exception handling
+
 ## Building the Project
 
 ### Prerequisites
@@ -57,3 +68,6 @@ The project builds successfully and all features work as follows:
 - FLAC files are properly detected and handled by the integrated libFLAC library
 - Audio playback works through the Windows audio system
 - Interactive command-line interface functions correctly
+- All commands (play, pause, stop, seek, bitrate, etc.) work properly
+- Background playback allows simultaneous command entry
+- GPU acceleration for audio processing and bitrate conversion

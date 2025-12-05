@@ -38,6 +38,8 @@
   - EQ参数设置
   - 性能统计获取
   - GPU处理流程管理
+  - 后台播放支持（非阻塞模式）
+  - 播放位置持久化功能
 
 ### 2.2 IGPUProcessor (GPU处理器接口)
 - **职责**: 定义GPU加速音频处理的统一接口
@@ -48,11 +50,23 @@
 - **主要方法**:
   ```cpp
   virtual bool Initialize(Backend backend) = 0;
-  virtual bool ProcessAudio(const float* inputBuffer, 
+  virtual bool ProcessAudio(const float* inputBuffer,
                         float* outputBuffer,
                         size_t bufferSize) = 0;
   virtual std::string GetGPUInfo() const = 0;
   virtual bool IsAvailable() const = 0;
+  // 新增音频处理功能方法
+  virtual bool ConvertBitrate(const float* inputBuffer,
+                             int inputBitrate,
+                             float* outputBuffer,
+                             int targetBitrate,
+                             size_t bufferSize) { return false; }
+  virtual bool ConvertSampleRate(const float* inputBuffer,
+                                 int inputSampleRate,
+                                 float* outputBuffer,
+                                 int outputSampleRate,
+                                 size_t inputSampleCount,
+                                 size_t& outputSampleCount) { return false; }
   ```
 
 ### 2.3 IAudioDecoder (音频解码器接口)
@@ -99,11 +113,15 @@
 ### 3.3 命令行接口设计
 支持以下命令：
 - `play <文件路径>` - 播放音频文件
+- `load <文件路径>` - 加载音频文件（不立即播放）
 - `pause` - 暂停/继续播放
 - `stop` - 停止播放
 - `seek <秒数>` - 跳转到指定位置
 - `eq <f1> <g1> <q1> <f2> <g2> <q2>` - 设置EQ参数
 - `stats` - 显示性能统计
+- `bitrate <kbps>` - 设置目标比特率进行GPU加速转换
+- `save <文件路径>` - 保存处理后的音频文件
+- `convert <输入> <输出> [比特率]` - GPU加速的文件转换
 - `quit/exit` - 退出播放器
 
 ## 4. 性能特点
@@ -140,13 +158,57 @@
 - 添加充分的注释和文档
 
 ### 5.2 依赖管理
+- libFLAC库: 提供FLAC音频解码能力
 - FFmpeg库: 提供强大的音频解码能力
 - Qt框架: 跨平台GUI支持
 - 各种音频驱动: 提供低延迟音频输出
 
-## 6. 扩展性设计
+## 6. FLAC支持架构
 
-### 6.1 添加新GPU后端
+### 6.1 libFLAC Integration
+- 使用vcpkg包管理器自动下载和安装FLAC库
+- CMakeLists.txt配置自动检测并链接FLAC库
+- 确认输出"FLAC support enabled"表示库已成功链接
+
+### 6.2 FLAC解码架构
+- 回调函数实现用于FLAC流式解码
+- 元码参数自动检测（采样率、声道数、位深度）
+- 原始音频数据缓冲与PCM格式转换
+- 与现有音频播放管道无缝集成
+
+### 6.3 文件格式检测
+- 自动识别WAV、FLAC等音频格式
+- 支持格式验证和错误处理
+- 清晰的错误消息和降级策略
+
+## 7. 后台播放与线程安全
+
+### 7.1 后台播放机制
+- **非阻塞播放**: 使用单独线程进行音频播放，不阻塞主线程
+- **原子变量同步**: 使用`std::atomic<bool>`确保线程安全
+- **互斥锁保护**: 关键区域使用`std::mutex`保护共享资源
+- **实时控制**: 支持播放中实时暂停、停止、跳转等操作
+
+### 7.2 播放状态管理
+- **位置持久化**: 停止播放后保存当前位置，下次播放从该位置继续
+- **状态跟踪**: `isPlaying`, `isPaused`, `shouldStop`状态变量同步
+- **资源管理**: 播放线程完成后正确清理资源
+
+## 8. GPU加速音频处理
+
+### 8.1 比特率转换
+- **实时转换**: GPU加速的音频比特率转换
+- **支持格式**: WAV/FLAC音频文件的GPU加速处理
+- **性能提升**: 利用GPU并行处理能力优化音频处理性能
+
+### 8.2 采样率转换
+- **采样率支持**: GPU加速的音频采样率转换
+- **质量保持**: 保持音频质量的同时进行高效处理
+- **格式适配**: 自动适配不同音频格式的处理需求
+
+## 9. 扩展性设计
+
+### 9.1 添加新GPU后端
 ```cpp
 class MyGPUProcessor : public IGPUProcessor {
     // 实现所有纯虚函数
@@ -162,33 +224,17 @@ std::unique_ptr<IGPUProcessor> GPUProcessorFactory::CreateProcessor(Backend back
 }
 ```
 
-### 6.2 添加新音频格式支持
+### 9.2 添加新音频格式支持
 1. 实现`IAudioDecoder`接口
 2. 在`DecoderFactory`中注册
 3. 添加格式检测逻辑
 
-## 7. 开发规范
+## 10. 开发规范
 
 - 使用现代C++17特性
 - 遵循RAII原则
 - 接口简洁清晰
 - 添加充分的注释和文档
 - 编写单元测试
-
-## 8. FLAC支持架构
-
-### 8.1 libFLAC Integration
-- 使用vcpkg包管理器自动下载和安装FLAC库
-- CMakeLists.txt配置自动检测并链接FLAC库
-- 确认输出"FLAC support enabled"表示库已成功链接
-
-### 8.2 FLAC解码架构
-- 回调函数实现用于FLAC流式解码
-- 元码参数自动检测（采样率、声道数、位深度）
-- 原始音频数据缓冲与PCM格式转换
-- 与现有音频播放管道无缝集成
-
-### 8.3 文件格式检测
-- 自动识别WAV、FLAC等音频格式
-- 支持格式验证和错误处理
-- 清晰的错误消息和降级策略
+- 实现完整错误处理机制
+- 保障线程安全和资源管理
