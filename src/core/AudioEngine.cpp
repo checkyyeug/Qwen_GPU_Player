@@ -799,9 +799,16 @@ bool AudioEngine::SetTargetBitrate(int targetBitrate) {
         return false;
     }
 
-    // Determine the current bitrate based on file size and duration
-    // For now, we'll estimate a typical input bitrate
-    int estimatedInputBitrate = 320; // Standard assumption for high quality audio
+    // Determine the current bitrate based on file format parameters
+    // Calculate actual bitrate from format information
+    int estimatedInputBitrate;
+    if (pImpl->waveFormat.nAvgBytesPerSec > 0) {
+        // Calculate from format parameters: bytes per sec * 8 bits / 1000 = kbps
+        estimatedInputBitrate = (pImpl->waveFormat.nAvgBytesPerSec * 8) / 1000;
+    } else {
+        // If format info is not available, use standard assumption
+        estimatedInputBitrate = 320; // Standard assumption for high quality audio
+    }
 
     std::cout << "Converting audio bitrate: " << estimatedInputBitrate << "kbps -> " << targetBitrate << "kbps\n";
 
@@ -880,19 +887,79 @@ bool AudioEngine::SetTargetBitrate(int targetBitrate) {
         );
 
         if (success) {
+            // Calculate new buffer size based on bitrate ratio
+            double bitrateRatio = static_cast<double>(targetBitrate) / estimatedInputBitrate;
+            size_t newNumSamples = static_cast<size_t>(numSamples * bitrateRatio);
+
             // Safely convert float output back to audio data with proper format
-            size_t outputSize = outputAudio.size() * bytesPerSample;
             if (pImpl->waveFormat.wBitsPerSample == 16) {
                 // Convert back to 16-bit PCM
                 try {
+                    size_t outputSize = newNumSamples * sizeof(short);
                     pImpl->audioData.resize(outputSize);
                     short* audioDataPtr = reinterpret_cast<short*>(pImpl->audioData.data());
 
-                    for (size_t i = 0; i < outputAudio.size() && i < (pImpl->audioData.size() / sizeof(short)); i++) {
+                    for (size_t i = 0; i < std::min(outputAudio.size(), newNumSamples); i++) {
                         float sample = outputAudio[i];
                         // Clamp value to valid range and convert back to 16-bit
-                        sample = std::max(-1.0f, std::min(1.0f, sample));
-                        audioDataPtr[i] = static_cast<short>(sample * 32767.0f);
+                        float clampedSample = std::max(-1.0f, std::min(1.0f, sample));
+                        audioDataPtr[i] = static_cast<short>(clampedSample * 32767.0f);
+                    }
+                } catch (const std::exception&) {
+                    std::cout << "Error: Could not resize audio data buffer\n";
+                    return false;
+                }
+            } else if (pImpl->waveFormat.wBitsPerSample == 8) {
+                // Convert back to 8-bit PCM
+                try {
+                    size_t outputSize = newNumSamples * sizeof(char);
+                    pImpl->audioData.resize(outputSize);
+                    char* audioDataPtr = pImpl->audioData.data();
+
+                    for (size_t i = 0; i < std::min(outputAudio.size(), newNumSamples); i++) {
+                        float sample = outputAudio[i];
+                        // Clamp value to valid range and convert back to 8-bit
+                        float clampedSample = std::max(-1.0f, std::min(1.0f, sample));
+                        audioDataPtr[i] = static_cast<char>((clampedSample + 1.0f) * 127.5f);
+                    }
+                } catch (const std::exception&) {
+                    std::cout << "Error: Could not resize audio data buffer\n";
+                    return false;
+                }
+            } else if (pImpl->waveFormat.wBitsPerSample == 24) {
+                // Convert back to 24-bit PCM
+                try {
+                    size_t outputSize = newNumSamples * 3;  // 3 bytes per 24-bit sample
+                    pImpl->audioData.resize(outputSize);
+
+                    for (size_t i = 0; i < std::min(outputAudio.size(), newNumSamples); i++) {
+                        float sample = outputAudio[i];
+                        // Clamp value to valid range and convert back to 24-bit
+                        float clampedSample = std::max(-1.0f, std::min(1.0f, sample));
+                        int32_t intSample = static_cast<int32_t>(clampedSample * 8388607.0f);  // 2^23 - 1
+
+                        // Write 3 bytes for 24-bit sample
+                        size_t byteOffset = i * 3;
+                        pImpl->audioData[byteOffset] = static_cast<char>(intSample & 0xFF);
+                        pImpl->audioData[byteOffset + 1] = static_cast<char>((intSample >> 8) & 0xFF);
+                        pImpl->audioData[byteOffset + 2] = static_cast<char>((intSample >> 16) & 0xFF);
+                    }
+                } catch (const std::exception&) {
+                    std::cout << "Error: Could not resize audio data buffer\n";
+                    return false;
+                }
+            } else {
+                // Default to 16-bit
+                try {
+                    size_t outputSize = newNumSamples * sizeof(short);
+                    pImpl->audioData.resize(outputSize);
+                    short* audioDataPtr = reinterpret_cast<short*>(pImpl->audioData.data());
+
+                    for (size_t i = 0; i < std::min(outputAudio.size(), newNumSamples); i++) {
+                        float sample = outputAudio[i];
+                        // Clamp value to valid range and convert back to 16-bit
+                        float clampedSample = std::max(-1.0f, std::min(1.0f, sample));
+                        audioDataPtr[i] = static_cast<short>(clampedSample * 32767.0f);
                     }
                 } catch (const std::exception&) {
                     std::cout << "Error: Could not resize audio data buffer\n";
@@ -900,12 +967,18 @@ bool AudioEngine::SetTargetBitrate(int targetBitrate) {
                 }
             }
 
+            // Update format parameters with the new bitrate
+            if (targetBitrate != estimatedInputBitrate) {
+                pImpl->waveFormat.nAvgBytesPerSec = (targetBitrate * 1000) / 8; // Update bytes/second based on new bitrate
+            }
+
             std::cout << "Audio bitrate converted from " << estimatedInputBitrate
                       << "kbps to " << targetBitrate << "kbps using GPU\n";
+            std::cout << "File size adjusted: " << numSamples << " samples -> " << newNumSamples << " samples\n";
             return true;
         } else {
             std::cout << "GPU bitrate conversion not supported or failed\n";
-            std::cout << "Using original audio data\n";
+            std::cout << "Using original audio data without bitrate change\n";
             return false;
         }
     } else {
